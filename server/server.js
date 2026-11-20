@@ -1691,9 +1691,12 @@ function handleApiRoute(req, res, url) {
     const user = getSessionUser(req);
     if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
     readJSONBody(req, 20 * 1024 * 1024)
-      .then(({ data }) => {
+      .then(({ data, overwrite }) => {
         if (!data || typeof data !== "object") return sendJSON(res, 400, { error: "Missing data object." });
-        const result = db.importUserData(user.id, data, false);
+        // overwrite:true is only sent by the "import from an export file"
+        // option on migrate-data.html, and only ever touches this
+        // account's own rows.
+        const result = db.importUserData(user.id, data, overwrite === true);
         sendJSON(res, 200, { ok: true, ...result });
       })
       .catch((err) => sendJSON(res, 400, { error: err.message }));

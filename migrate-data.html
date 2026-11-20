@@ -24,6 +24,20 @@
 
       <div id="migrate-status" class="hint"></div>
       <button type="button" id="migrate-btn">Import data from this browser</button>
+      <hr />
+      <h2 class="auth-title">Import from an export file</h2>
+      <p class="hint">
+        Moving from another Idikai site? On the old site, use the menu's download/backup option to get your
+        <code>idikai-export-….json</code> file, then choose it here.
+      </p>
+      <input type="file" id="import-file" accept=".json,application/json" />
+      <p class="hint">
+        <label><input type="checkbox" id="import-overwrite" checked />
+        Replace anything this account already has with the file's version</label>
+      </p>
+      <div id="import-file-status" class="hint"></div>
+      <button type="button" id="import-file-btn">Import file</button>
+
       <p><a href="index.html">Back to the app</a></p>
     </div>
   </main>

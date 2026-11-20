@@ -64,4 +64,54 @@ document.addEventListener("DOMContentLoaded", () => {
         statusEl.textContent = "Could not reach the server. Check your connection and try again.";
       });
   });
+
+  // Import from an /api/export JSON file (e.g. moving data from the main
+  // Idikai site to this one). The export is already the exact
+  // { key: value } shape /api/import expects.
+  const fileInput = document.getElementById("import-file");
+  const fileBtn = document.getElementById("import-file-btn");
+  const fileStatus = document.getElementById("import-file-status");
+  const overwriteBox = document.getElementById("import-overwrite");
+
+  fileBtn.addEventListener("click", () => {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      fileStatus.textContent = "Choose your export file first.";
+      return;
+    }
+    fileBtn.disabled = true;
+    fileStatus.textContent = "Reading file…";
+    file.text()
+      .then((text) => {
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          throw new Error("That file isn't a valid Idikai export.");
+        }
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          throw new Error("That file isn't a valid Idikai export.");
+        }
+        fileStatus.textContent = `Uploading ${Object.keys(data).length} item(s)…`;
+        return fetch("/api/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data, overwrite: overwriteBox.checked }),
+        }).then((res) => res.json().then((body) => ({ ok: res.ok, body })));
+      })
+      .then(({ ok, body }) => {
+        fileBtn.disabled = false;
+        if (!ok) {
+          fileStatus.textContent = `Something went wrong: ${body.error || "unknown error"}.`;
+          return;
+        }
+        fileStatus.textContent = `Done — imported ${body.imported} item(s)` +
+          (body.skipped ? `, skipped ${body.skipped} the account already had.` : ".") +
+          " Close any other Idikai tabs, then reload the app to see your data.";
+      })
+      .catch((err) => {
+        fileBtn.disabled = false;
+        fileStatus.textContent = err.message || "Could not reach the server. Check your connection and try again.";
+      });
+  });
 });
