@@ -293,6 +293,11 @@ let activeReadingTabId = null;
 // A pseudo-passage id: opens the Storage Locker as another reference tab
 // alongside real reading passages, rather than a separate mechanism.
 const LOCKER_TAB_ID = "__storage-locker__";
+// Reference-panel tabs that live on the entry itself: one editable
+// "My notes" tab, and any number of pasted-text tabs ("text:<id>").
+const NOTES_TAB_ID = "__notes__";
+const NEW_TEXT_TAB_VALUE = "__new_text__";
+const TEXT_TAB_PREFIX = "text:";
 
 function getLockerPseudoPassage() {
   return { language: activeEntryLang, title: t("storageLockerTabLabel", "Storage Locker") };
@@ -354,6 +359,10 @@ function initWritingEntryPage() {
 
   renderLinkSelectOptions(linkSelect, existingEntry ? existingEntry.linkedPassageId : null);
 
+  if (existingEntry) {
+    (existingEntry.referenceTexts || []).forEach((rt) => openReadingTab(TEXT_TAB_PREFIX + rt.id));
+    if ((existingEntry.referenceNotes || "").trim()) openReadingTab(NOTES_TAB_ID);
+  }
   if (existingEntry && existingEntry.linkedPassageId && Storage.getPassage(existingEntry.linkedPassageId)) {
     openReadingTab(existingEntry.linkedPassageId);
   }
@@ -363,6 +372,9 @@ function initWritingEntryPage() {
   if (existingEntry) syncHelperWordsFromText(existingEntry.text || "", existingEntry.title);
   renderHelperWordsPanel(activeEntryLang);
   initWritingHelperNotes(activeEntryLang);
+
+  initEntryTextHighlighter();
+  initWritingAccentBar();
 
   if (existingEntry) {
     showViewMode();
@@ -424,6 +436,10 @@ function initWritingEntryPage() {
   if (grammarSentenceCheckList) grammarSentenceCheckList.addEventListener("click", handleGrammarSentenceCheckListClick);
   const viewEntryText = document.getElementById("view-entry-text");
   if (viewEntryText) viewEntryText.addEventListener("click", handleViewEntryTextClick);
+  const acceptAllBtn = document.getElementById("vocab-accept-all-btn");
+  if (acceptAllBtn) acceptAllBtn.addEventListener("click", () => handleVocabSuggestionsAll(true));
+  const ignoreAllBtn = document.getElementById("vocab-ignore-all-btn");
+  if (ignoreAllBtn) ignoreAllBtn.addEventListener("click", () => handleVocabSuggestionsAll(false));
 }
 
 // Clicking a red (Vocab-check-corrected) word in View mode jumps down to
@@ -431,6 +447,11 @@ function initWritingEntryPage() {
 // for it — matched by the resolved target word, since that's what's
 // actually rendered red (not the original bracketed English).
 function handleViewEntryTextClick(e) {
+  const sugEl = e.target.closest && e.target.closest(".vocab-suggestion");
+  if (sugEl) {
+    openVocabSuggestionPopup(sugEl, sugEl.dataset.key);
+    return;
+  }
   if (!e.target.classList || !e.target.classList.contains("corrected-word")) return;
 
   const targetWord = e.target.textContent;
@@ -551,8 +572,11 @@ function showViewMode() {
       entry.text || "",
       entry.correctedWords || [],
       entry.grammarCorrectedWords || [],
-      entry.underlinedPhrases || []
+      entry.underlinedPhrases || [],
+      new Set(liveVocabSuggestions(entry).map((sug) => sug.key))
     );
+  renderVocabSuggestionBar(entry);
+  closeVocabSuggestionPopup();
 
   const status = document.getElementById("vocab-check-status");
   if (status) status.hidden = true;
@@ -635,6 +659,130 @@ function showEditMode() {
   updateAutosaveStatus(entry ? "All changes saved" : "", entry ? "allChangesSavedStatus" : null);
 
   updateWordCount();
+  renderEntryTextHighlights();
+}
+
+// ---- Edit mode: words you didn't know stay red while you edit ----
+// A <textarea> can't colour part of its text, so a "backdrop" div with
+// identical font/padding/size sits behind it showing the same text with
+// the accepted Vocab-check words in red; the textarea's own text is made
+// transparent (caret still visible) so you see the backdrop through it.
+function initEntryTextHighlighter() {
+  const ta = document.getElementById("entry-text");
+  if (!ta || ta.dataset.highlighter) return;
+  ta.dataset.highlighter = "1";
+
+  const wrap = document.createElement("div");
+  wrap.className = "entry-text-hl-wrap";
+  ta.parentNode.insertBefore(wrap, ta);
+  const back = document.createElement("div");
+  back.id = "entry-text-backdrop";
+  back.className = "entry-text-hl-backdrop";
+  back.setAttribute("aria-hidden", "true");
+  wrap.appendChild(back);
+  wrap.appendChild(ta);
+
+  const cs = getComputedStyle(ta);
+  back.style.backgroundColor = cs.backgroundColor;
+  ta.classList.add("entry-text-hl-input");
+
+  ta.addEventListener("input", renderEntryTextHighlights);
+  ta.addEventListener("scroll", () => {
+    back.scrollTop = ta.scrollTop;
+    back.scrollLeft = ta.scrollLeft;
+  });
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncEntryTextBackdropBox).observe(ta);
+  syncEntryTextBackdropBox();
+}
+
+function syncEntryTextBackdropBox() {
+  const ta = document.getElementById("entry-text");
+  const back = document.getElementById("entry-text-backdrop");
+  if (!ta || !back) return;
+  const cs = getComputedStyle(ta);
+  [
+    "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing",
+    "textAlign", "textIndent", "tabSize", "paddingTop", "paddingLeft", "paddingBottom",
+    "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderRadius", "boxSizing",
+  ].forEach((prop) => { back.style[prop] = cs[prop]; });
+  // Leave room for the textarea's scrollbar (if it has one) so lines wrap identically.
+  const borders = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+  const scrollbar = Math.max(0, ta.offsetWidth - ta.clientWidth - borders);
+  back.style.paddingRight = `${parseFloat(cs.paddingRight) + scrollbar}px`;
+  back.style.width = `${ta.offsetWidth}px`;
+  back.style.height = `${ta.offsetHeight}px`;
+  back.scrollTop = ta.scrollTop;
+}
+
+function renderEntryTextHighlights() {
+  const ta = document.getElementById("entry-text");
+  const back = document.getElementById("entry-text-backdrop");
+  if (!ta || !back) return;
+  const entry = entryPersisted ? Storage.getWritingEntry(activeEntryId) : null;
+  const words = Array.from(new Set(((entry && entry.correctedWords) || []).filter(Boolean)));
+  back.innerHTML = "";
+  const text = ta.value;
+  if (words.length) {
+    words.sort((a, b) => b.length - a.length);
+    const pattern = new RegExp(`(${words.map(escapeRegExp).join("|")})`, "g");
+    const set = new Set(words);
+    text.split(pattern).forEach((part) => {
+      if (!part) return;
+      if (set.has(part)) {
+        const span = document.createElement("span");
+        span.className = "entry-text-hl-word";
+        span.textContent = part;
+        back.appendChild(span);
+      } else {
+        back.appendChild(document.createTextNode(part));
+      }
+    });
+  } else {
+    back.appendChild(document.createTextNode(text));
+  }
+  // A trailing newline needs something after it to take up a line.
+  back.appendChild(document.createTextNode("\n "));
+  syncEntryTextBackdropBox();
+}
+
+// ---- Accent buttons under the writing box ----
+const WRITING_ACCENT_SETS = {
+  es: ["á", "é", "í", "ó", "ú", "ñ", "ü", "¿", "¡"],
+  fr: ["à", "â", "ç", "é", "è", "ê", "ë", "î", "ï", "ô", "ù", "û", "œ", "«", "»"],
+};
+
+function initWritingAccentBar() {
+  const chars = WRITING_ACCENT_SETS[activeEntryLang];
+  const ta = document.getElementById("entry-text");
+  if (!chars || !ta || document.getElementById("writing-accent-bar")) return;
+
+  const bar = document.createElement("div");
+  bar.id = "writing-accent-bar";
+  bar.className = "accent-bar";
+  chars.forEach((ch) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "accent-btn";
+    btn.textContent = ch;
+    btn.title = "Click to insert (Shift-click for a capital)";
+    // Keep the cursor in the writing box.
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", (e) => {
+      const str = e.shiftKey ? ch.toUpperCase() : ch;
+      ta.focus();
+      ta.setRangeText(str, ta.selectionStart, ta.selectionEnd, "end");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    bar.appendChild(btn);
+  });
+  const hint = document.createElement("span");
+  hint.className = "accent-bar-hint";
+  hint.textContent = "Shift-click for capitals";
+  hint.dataset.immersionKey = "accentBarHint";
+  bar.appendChild(hint);
+
+  const anchor = ta.closest("label") || ta;
+  anchor.insertAdjacentElement("afterend", bar);
 }
 
 function handleEditClick() {
@@ -1302,6 +1450,67 @@ function handleDeleteHelperWord(wordId) {
 
 // ---- Vocab check ----
 
+// ---- Vocab check: suggestions you accept or ignore ----
+// Vocab check no longer swaps <words> straight away. It looks each one
+// up and stores a suggestion on the entry (entry.vocabSuggestions); the
+// <word> is highlighted in View mode and clicking it offers Accept /
+// Ignore. Accepting swaps in the target word and adds it to
+// correctedWords, so it's shown in red from then on (View AND Edit mode)
+// as a word you didn't know. Ignoring keeps the word exactly as typed.
+
+const VOCAB_KANJI_PATTERN = /[一-龯]/;
+
+// Japanese kanji words carry their furigana reading, e.g. 猫（ねこ).
+function vocabSuggestionDisplayText(s) {
+  if (activeEntryLang === "ja" && s.furigana && VOCAB_KANJI_PATTERN.test(s.targetWord)) {
+    return `${s.targetWord}（${s.furigana}）`;
+  }
+  return s.targetWord;
+}
+
+// The Claude-backed lookup sometimes fails transiently (timeout, rate
+// limit) and Translate silently falls back to the free MyMemory service,
+// which often just echoes the English back — that's what made Vocab
+// check look like it "skipped" words. Retry the real lookup once, and
+// only fall back to a MyMemory answer marked as unsure.
+async function lookupVocabWithRetry(word) {
+  let fallback = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await Translate.lookupTranslation(word, "en", activeEntryLang);
+      if (r && r.translation) {
+        if (r.source !== "mymemory") return { result: r, unsure: false };
+        fallback = fallback || r;
+      }
+    } catch (err) {
+      console.error(`Vocab check lookup failed for "${word}":`, err);
+    }
+  }
+  return fallback ? { result: fallback, unsure: true } : null;
+}
+
+// Suggestions whose <word> is still actually in the entry's text.
+function liveVocabSuggestions(entry) {
+  const present = new Set(extractBracketWords((entry && entry.text) || "").map((w) => w.toLowerCase()));
+  return ((entry && entry.vocabSuggestions) || []).filter((sug) => present.has(sug.key));
+}
+
+function setVocabCheckStatus(text, key, vars) {
+  const status = document.getElementById("vocab-check-status");
+  if (!status) return;
+  if (!text) {
+    status.hidden = true;
+    return;
+  }
+  status.hidden = false;
+  status.textContent = text;
+  if (key) status.dataset.immersionKey = key;
+  else delete status.dataset.immersionKey;
+  if (vars) status.dataset.immersionVars = JSON.stringify(vars);
+  else delete status.dataset.immersionVars;
+  if (key) retranslateImmersionElement(status);
+}
+
 async function handleVocabCheckClick() {
   if (!entryPersisted) {
     alert(t("saveEntryFirstVocabAlert", "Save the entry first, then run Vocab check."));
@@ -1316,86 +1525,168 @@ async function handleVocabCheckClick() {
     return;
   }
 
+  const existing = liveVocabSuggestions(entry);
+  const existingKeys = new Set(existing.map((sug) => sug.key));
+  const toCheck = uniqueWords.filter((w) => !existingKeys.has(w.toLowerCase()));
+
   const btn = document.getElementById("vocab-check-btn");
-  const status = document.getElementById("vocab-check-status");
   if (btn) btn.disabled = true;
-  if (status) {
-    status.hidden = false;
-    status.textContent = "Checking...";
-    status.dataset.immersionKey = "checkingVocabStatus";
-    delete status.dataset.immersionVars;
-    retranslateImmersionElement(status);
-  }
+  setVocabCheckStatus("Checking...", "checkingVocabStatus");
 
-  const results = {}; // lowercase word -> { targetWord, furigana }
+  const found = [];
   const failed = [];
-
-  for (const word of uniqueWords) {
-    try {
-      const result = await Translate.lookupTranslation(word, "en", activeEntryLang);
-      // Japanese uses a completely different script — if the "translation"
-      // is literally the same string as the English input, that's not a
-      // real translation, it's the model echoing back an unconfident
-      // guess. Treat it as a failure rather than inserting English text
-      // into a Japanese entry. (Not applied to Spanish, where an
-      // identical string, e.g. a loanword like "hotel", can be correct.)
-      const isJapaneseEcho =
-        activeEntryLang === "ja" && result && result.translation.trim().toLowerCase() === word.trim().toLowerCase();
-      if (result && result.translation && !isJapaneseEcho) {
-        results[word.toLowerCase()] = { targetWord: result.translation, furigana: result.furigana || null };
-      } else {
-        failed.push(word);
-      }
-    } catch (err) {
-      console.error(`Vocab check failed for "${word}":`, err);
+  for (const word of toCheck) {
+    const hit = await lookupVocabWithRetry(word);
+    const r = hit && hit.result;
+    // Japanese uses a different script — a "translation" identical to
+    // the English input is the model echoing back, not a real answer.
+    const isJapaneseEcho =
+      activeEntryLang === "ja" && r && r.translation.trim().toLowerCase() === word.trim().toLowerCase();
+    if (r && r.translation && !isJapaneseEcho) {
+      found.push({
+        key: word.toLowerCase(),
+        english: word,
+        targetWord: r.translation,
+        furigana: r.furigana || null,
+        unsure: !!hit.unsure,
+      });
+    } else {
       failed.push(word);
     }
   }
 
-  // Japanese: a kanji word on its own is ambiguous to a learner still
-  // building reading fluency, so the replacement carries its furigana
-  // reading right alongside it, the same way it would be written in an
-  // annotated text -- e.g. <cat> -> 猫（ねこ）. Words with no kanji (pure
-  // kana, or anything in Spanish/French) are left as just the word.
-  const KANJI_PATTERN = /[\u4e00-\u9faf]/;
-  const displayTextFor = (hit) => {
-    if (activeEntryLang === "ja" && hit.furigana && KANJI_PATTERN.test(hit.targetWord)) {
-      return `${hit.targetWord}（${hit.furigana}）`;
-    }
-    return hit.targetWord;
-  };
-
-  const newText = entry.text.replace(BRACKET_PATTERN, (match, inner) => {
-    const hit = results[inner.trim().toLowerCase()];
-    return hit ? displayTextFor(hit) : match;
-  });
-
-  const newCorrectedWords = Array.from(
-    new Set([...(entry.correctedWords || []), ...Object.values(results).map((r) => displayTextFor(r))])
-  );
-
-  Storage.updateWritingEntry(activeEntryId, { text: newText, correctedWords: newCorrectedWords });
-
-  Object.keys(results).forEach((key) => {
-    const originalWord = uniqueWords.find((w) => w.toLowerCase() === key);
-    Storage.recordHelperWordLookup(activeEntryLang, originalWord, results[key]);
-  });
-
-  renderHelperWordsPanel(activeEntryLang);
-  showViewMode(); // resets vocab-check-status — set its final state after, not before
+  Storage.updateWritingEntry(activeEntryId, { vocabSuggestions: existing.concat(found) });
 
   if (btn) btn.disabled = false;
-  if (status) {
-    if (failed.length > 0) {
-      status.hidden = false;
-      const failedList = failed.join(", ");
-      status.textContent = `Couldn't find a translation for: ${failedList} — left as-is, try again later.`;
-      status.dataset.immersionKey = "couldntFindTranslationStatus";
-      status.dataset.immersionVars = JSON.stringify({ words: failedList });
-      retranslateImmersionElement(status);
-    } else {
-      status.hidden = true;
-    }
+  showViewMode(); // re-renders the highlights and the suggestion bar
+
+  const parts = [];
+  const total = existing.length + found.length;
+  if (total > 0) parts.push(t("vocabSuggestionsReadyStatus", "Click a highlighted word to accept or ignore its suggestion."));
+  if (failed.length > 0) {
+    parts.push(
+      t("couldntFindTranslationStatus", `Couldn't find a translation for: ${failed.join(", ")} — left as-is, try again later.`, {
+        words: failed.join(", "),
+      })
+    );
+  }
+  setVocabCheckStatus(parts.join(" "));
+}
+
+// accept=true swaps in the suggestion (and marks it red for good);
+// accept=false keeps the learner's own word, just without the brackets.
+function applyVocabSuggestion(key, accept) {
+  const entry = Storage.getWritingEntry(activeEntryId);
+  if (!entry) return;
+  const sug = (entry.vocabSuggestions || []).find((x) => x.key === key);
+  if (!sug) return;
+  const display = vocabSuggestionDisplayText(sug);
+
+  const text = (entry.text || "").replace(BRACKET_PATTERN, (match, inner) => {
+    if (inner.trim().toLowerCase() !== key) return match;
+    return accept ? display : inner.trim();
+  });
+  const updates = { text, vocabSuggestions: (entry.vocabSuggestions || []).filter((x) => x.key !== key) };
+  if (accept) {
+    updates.correctedWords = Array.from(new Set([...(entry.correctedWords || []), display]));
+    Storage.recordHelperWordLookup(activeEntryLang, sug.english, { targetWord: sug.targetWord, furigana: sug.furigana });
+  }
+  Storage.updateWritingEntry(activeEntryId, updates);
+}
+
+function finishVocabSuggestionChange() {
+  closeVocabSuggestionPopup();
+  renderHelperWordsPanel(activeEntryLang);
+  showViewMode();
+}
+
+function handleVocabSuggestionsAll(accept) {
+  const entry = Storage.getWritingEntry(activeEntryId);
+  liveVocabSuggestions(entry).forEach((sug) => applyVocabSuggestion(sug.key, accept));
+  finishVocabSuggestionChange();
+}
+
+function closeVocabSuggestionPopup() {
+  const pop = document.getElementById("vocab-suggestion-popup");
+  if (pop) pop.remove();
+}
+
+function openVocabSuggestionPopup(anchor, key) {
+  closeVocabSuggestionPopup();
+  const entry = Storage.getWritingEntry(activeEntryId);
+  const sug = entry && (entry.vocabSuggestions || []).find((x) => x.key === key);
+  if (!sug) return;
+
+  const pop = document.createElement("div");
+  pop.id = "vocab-suggestion-popup";
+  pop.className = "vocab-suggestion-popup";
+
+  const line = document.createElement("p");
+  line.className = "vocab-suggestion-line";
+  const from = document.createElement("span");
+  from.textContent = sug.english;
+  const arrow = document.createTextNode(" → ");
+  const to = document.createElement("strong");
+  to.textContent = vocabSuggestionDisplayText(sug);
+  line.append(from, arrow, to);
+  pop.appendChild(line);
+
+  if (sug.unsure) {
+    const note = document.createElement("p");
+    note.className = "hint vocab-suggestion-unsure";
+    note.textContent = "Not sure about this one — double-check it.";
+    note.dataset.immersionKey = "vocabSuggestionUnsure";
+    pop.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "vocab-suggestion-actions";
+  const acceptBtn = document.createElement("button");
+  acceptBtn.type = "button";
+  acceptBtn.className = "vocab-suggestion-accept";
+  acceptBtn.textContent = "Accept";
+  acceptBtn.dataset.immersionKey = "acceptButton";
+  acceptBtn.addEventListener("click", () => {
+    applyVocabSuggestion(key, true);
+    finishVocabSuggestionChange();
+  });
+  const ignoreBtn = document.createElement("button");
+  ignoreBtn.type = "button";
+  ignoreBtn.className = "vocab-suggestion-ignore";
+  ignoreBtn.textContent = "Ignore";
+  ignoreBtn.dataset.immersionKey = "ignoreButton";
+  ignoreBtn.addEventListener("click", () => {
+    applyVocabSuggestion(key, false);
+    finishVocabSuggestionChange();
+  });
+  actions.append(acceptBtn, ignoreBtn);
+  pop.appendChild(actions);
+
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8;
+  pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+  pop.style.left = `${Math.max(window.scrollX + 8, Math.min(window.scrollX + r.left, maxLeft))}px`;
+}
+
+document.addEventListener("click", (e) => {
+  const pop = document.getElementById("vocab-suggestion-popup");
+  if (!pop) return;
+  if (pop.contains(e.target) || (e.target.closest && e.target.closest(".vocab-suggestion"))) return;
+  closeVocabSuggestionPopup();
+});
+
+function renderVocabSuggestionBar(entry) {
+  const bar = document.getElementById("vocab-suggestion-bar");
+  if (!bar) return;
+  const live = liveVocabSuggestions(entry);
+  bar.hidden = live.length === 0;
+  const count = document.getElementById("vocab-suggestion-count");
+  if (count) {
+    count.textContent = `${live.length} suggestion(s) waiting`;
+    count.dataset.immersionKey = "vocabSuggestionsWaiting";
+    count.dataset.immersionVars = JSON.stringify({ n: live.length });
+    retranslateImmersionElement(count);
   }
 }
 
@@ -2292,7 +2583,7 @@ function handleSaveAddToGrammar(note, themeSelect) {
 // (Grammar check) render blue — two separate, independently-accumulated
 // lists so it's always obvious which check touched a given word, rather
 // than one shade of red regardless of source.
-function renderEntryTextInto(container, text, correctedWords, grammarCorrectedWords, underlinedPhrases) {
+function renderEntryTextInto(container, text, correctedWords, grammarCorrectedWords, underlinedPhrases, suggestionKeys) {
   container.innerHTML = "";
 
   if (!text) {
@@ -2304,6 +2595,31 @@ function renderEntryTextInto(container, text, correctedWords, grammarCorrectedWo
     return;
   }
 
+  // <words> with a pending Vocab-check suggestion are highlighted and
+  // clickable (see openVocabSuggestionPopup); everything else goes
+  // through the normal red/blue/underline highlighting.
+  if (suggestionKeys && suggestionKeys.size) {
+    text.split(/([<＜][^<>＜＞]+[>＞])/).forEach((part) => {
+      if (!part) return;
+      const m = part.match(/^[<＜]([^<>＜＞]+)[>＞]$/);
+      const key = m && m[1].trim().toLowerCase();
+      if (key && suggestionKeys.has(key)) {
+        const span = document.createElement("span");
+        span.className = "vocab-suggestion";
+        span.dataset.key = key;
+        span.textContent = part;
+        container.appendChild(span);
+      } else {
+        appendHighlightedEntryText(container, part, correctedWords, grammarCorrectedWords, underlinedPhrases);
+      }
+    });
+    return;
+  }
+
+  appendHighlightedEntryText(container, text, correctedWords, grammarCorrectedWords, underlinedPhrases);
+}
+
+function appendHighlightedEntryText(container, text, correctedWords, grammarCorrectedWords, underlinedPhrases) {
   const vocabSet = new Set((correctedWords || []).filter(Boolean));
   const grammarSet = new Set((grammarCorrectedWords || []).filter(Boolean));
   // Purely a formatting choice the learner made themselves (see
@@ -2314,7 +2630,7 @@ function renderEntryTextInto(container, text, correctedWords, grammarCorrectedWo
   const allWords = Array.from(new Set([...vocabSet, ...grammarSet, ...underlineSet]));
 
   if (allWords.length === 0) {
-    container.textContent = text;
+    container.appendChild(document.createTextNode(text));
     return;
   }
 
@@ -2859,7 +3175,7 @@ function renderReadingTabStrip() {
   if (!tabsContainer) return;
   tabsContainer.innerHTML = "";
   openReadingTabIds.forEach((passageId) => {
-    const passage = passageId === LOCKER_TAB_ID ? getLockerPseudoPassage() : Storage.getPassage(passageId);
+    const passage = getReferenceTabInfo(passageId);
     if (!passage) return;
     tabsContainer.appendChild(buildReadingTabElement(passageId, passage, activeReadingTabId));
   });
@@ -2881,6 +3197,14 @@ function renderReadingTabContent() {
 
   if (activeReadingTabId === LOCKER_TAB_ID) {
     renderLockerTabContent(content);
+    return;
+  }
+  if (activeReadingTabId === NOTES_TAB_ID) {
+    renderNotesTabContent(content);
+    return;
+  }
+  if (activeReadingTabId.startsWith(TEXT_TAB_PREFIX)) {
+    renderTextTabContent(content, activeReadingTabId.slice(TEXT_TAB_PREFIX.length));
     return;
   }
 
@@ -2966,7 +3290,7 @@ function switchReadingTab(passageId) {
 }
 
 function openReadingTab(passageId) {
-  if (passageId !== LOCKER_TAB_ID && !Storage.getPassage(passageId)) return;
+  if (!getReferenceTabInfo(passageId)) return;
   if (!openReadingTabIds.includes(passageId)) {
     openReadingTabIds.push(passageId);
   }
@@ -3002,21 +3326,133 @@ function renderReadingTabPickerOptions() {
     lockerOpt.textContent = t("storageLockerTabLabel", "Storage Locker");
     select.appendChild(lockerOpt);
   }
+  const entry = entryPersisted ? Storage.getWritingEntry(activeEntryId) : null;
+  ((entry && entry.referenceTexts) || [])
+    .filter((rt) => !openIds.has(TEXT_TAB_PREFIX + rt.id))
+    .forEach((rt) => {
+      const opt = document.createElement("option");
+      opt.value = TEXT_TAB_PREFIX + rt.id;
+      opt.textContent = rt.title || t("pastedTextTabLabel", "Pasted text");
+      select.appendChild(opt);
+    });
+  if (!openIds.has(NOTES_TAB_ID)) {
+    const notesOpt = document.createElement("option");
+    notesOpt.value = NOTES_TAB_ID;
+    notesOpt.textContent = t("myNotesTabLabel", "My notes");
+    select.appendChild(notesOpt);
+  }
+  const newTextOpt = document.createElement("option");
+  newTextOpt.value = NEW_TEXT_TAB_VALUE;
+  newTextOpt.textContent = t("pasteOwnTextOption", "+ Paste your own text…");
+  select.appendChild(newTextOpt);
+}
+
+// Label/language for any reference tab id (passage, locker, notes, text).
+function getReferenceTabInfo(tabId) {
+  if (tabId === LOCKER_TAB_ID) return getLockerPseudoPassage();
+  if (tabId === NOTES_TAB_ID) return { title: t("myNotesTabLabel", "My notes"), language: activeEntryLang };
+  if (tabId && tabId.startsWith(TEXT_TAB_PREFIX)) {
+    const entry = Storage.getWritingEntry(activeEntryId);
+    const rt = entry && (entry.referenceTexts || []).find((x) => TEXT_TAB_PREFIX + x.id === tabId);
+    return rt ? { title: rt.title || t("pastedTextTabLabel", "Pasted text"), language: activeEntryLang } : null;
+  }
+  return Storage.getPassage(tabId);
+}
+
+// Debounced saves for the editable reference tabs, flushed on pagehide.
+const referenceSaveTimers = {};
+function scheduleReferenceSave(key, fn) {
+  clearTimeout(referenceSaveTimers[key]);
+  referenceSaveTimers[key] = setTimeout(() => {
+    delete referenceSaveTimers[key];
+    fn();
+  }, 500);
+  referenceSaveTimers[key + ":fn"] = fn;
+}
+function flushReferenceSaves() {
+  Object.keys(referenceSaveTimers)
+    .filter((k) => !k.endsWith(":fn"))
+    .forEach((k) => {
+      clearTimeout(referenceSaveTimers[k]);
+      delete referenceSaveTimers[k];
+      const fn = referenceSaveTimers[k + ":fn"];
+      if (fn) fn();
+    });
+}
+window.addEventListener("pagehide", flushReferenceSaves);
+
+function updateReferenceText(textId, updates) {
+  const entry = Storage.getWritingEntry(activeEntryId);
+  if (!entry) return;
+  const list = (entry.referenceTexts || []).map((rt) => (rt.id === textId ? { ...rt, ...updates } : rt));
+  Storage.updateWritingEntry(activeEntryId, { referenceTexts: list });
+}
+
+function renderTextTabContent(content, textId) {
+  const entry = Storage.getWritingEntry(activeEntryId);
+  const rt = entry && (entry.referenceTexts || []).find((x) => x.id === textId);
+  if (!rt) return;
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "reference-text-title";
+  titleInput.value = rt.title || "";
+  titleInput.placeholder = t("referenceTextTitlePlaceholder", "Title (e.g. Teacher's model answer)");
+  titleInput.addEventListener("input", () => {
+    scheduleReferenceSave(`title:${textId}`, () => {
+      updateReferenceText(textId, { title: titleInput.value.trim() });
+      renderReadingTabStrip();
+    });
+  });
+  content.appendChild(titleInput);
+
+  const body = document.createElement("textarea");
+  body.className = "reference-text-body";
+  body.rows = 10;
+  body.value = rt.text || "";
+  body.placeholder = t("referenceTextBodyPlaceholder", "Paste or type the text you want to look at while you write…");
+  body.addEventListener("input", () => {
+    scheduleReferenceSave(`text:${textId}`, () => updateReferenceText(textId, { text: body.value }));
+  });
+  content.appendChild(body);
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "secondary reference-text-delete";
+  del.textContent = t("deleteThisTextButton", "Delete this text");
+  del.addEventListener("click", () => {
+    if (!confirm(t("deleteThisTextConfirm", "Delete this text from the entry?"))) return;
+    flushReferenceSaves();
+    const cur = Storage.getWritingEntry(activeEntryId);
+    Storage.updateWritingEntry(activeEntryId, {
+      referenceTexts: ((cur && cur.referenceTexts) || []).filter((x) => x.id !== textId),
+    });
+    closeReadingTab(TEXT_TAB_PREFIX + textId);
+  });
+  content.appendChild(del);
+}
+
+function renderNotesTabContent(content) {
+  const entry = Storage.getWritingEntry(activeEntryId);
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = t("myNotesTabHint", "Notes for this entry — saved automatically.");
+  content.appendChild(hint);
+  const body = document.createElement("textarea");
+  body.className = "reference-text-body";
+  body.rows = 10;
+  body.value = (entry && entry.referenceNotes) || "";
+  body.placeholder = t("myNotesTabPlaceholder", "Plan, useful phrases, anything…");
+  body.addEventListener("input", () => {
+    scheduleReferenceSave("notes", () => Storage.updateWritingEntry(activeEntryId, { referenceNotes: body.value }));
+  });
+  content.appendChild(body);
 }
 
 function handleEntryTabPlusClick() {
   const plusBtn = document.getElementById("entry-tab-plus");
   const select = document.getElementById("entry-tab-picker");
   if (!select) return;
-
-  const openIds = new Set(openReadingTabIds);
-  const available = Storage.getPassages().filter((p) => p.language === activeEntryLang && !openIds.has(p.id));
-  const lockerAvailable = !openIds.has(LOCKER_TAB_ID);
-  if (available.length === 0 && !lockerAvailable) {
-    alert(t("noMoreReferencesAlert", "Nothing left to open — save a passage from the Reading section first, or every reference is already open."));
-    return;
-  }
-
   renderReadingTabPickerOptions();
   select.hidden = false;
   if (plusBtn) plusBtn.hidden = true;
@@ -3024,9 +3460,23 @@ function handleEntryTabPlusClick() {
 }
 
 function handleEntryTabPickerChange(e) {
-  const passageId = e.target.value;
+  let passageId = e.target.value;
   if (!passageId) return;
-  openReadingTab(passageId);
+
+  if (passageId === NEW_TEXT_TAB_VALUE || passageId === NOTES_TAB_ID) {
+    // These are stored on the entry, so it has to exist first.
+    if (!entryPersisted) flushAutosave();
+    if (!entryPersisted) {
+      alert(t("saveEntryFirstReferenceAlert", "Give the entry a title or start writing first, then add your own text or notes."));
+      passageId = null;
+    } else if (passageId === NEW_TEXT_TAB_VALUE) {
+      const entry = Storage.getWritingEntry(activeEntryId);
+      const rt = { id: Storage.uid(), title: "", text: "" };
+      Storage.updateWritingEntry(activeEntryId, { referenceTexts: ((entry && entry.referenceTexts) || []).concat([rt]) });
+      passageId = TEXT_TAB_PREFIX + rt.id;
+    }
+  }
+  if (passageId) openReadingTab(passageId);
 
   const select = document.getElementById("entry-tab-picker");
   const plusBtn = document.getElementById("entry-tab-plus");

@@ -46,6 +46,12 @@
 const APP_TABS_SESSION_KEY = "appTabs.open";
 const APP_TABS_ACTIVE_SESSION_KEY = "appTabs.activeHref";
 const APP_TABS_ACTIVE_LANG_KEY = "appTabs.activeLanguage";
+// Set by the "+" picker just before it navigates, so the page it lands
+// on opens as a NEW tab even when that page isn't an addressable unit
+// (e.g. "+ New entry", a list page) — without this, the landing page
+// re-pointed the tab you were already in, so "+" looked like it did
+// nothing / replaced your current tab.
+const APP_TABS_OPEN_NEW_KEY = "appTabs.openNew";
 const APP_TAB_LANGUAGE_NAMES = { es: "Spanish", ja: "Japanese", fr: "French" };
 
 const APP_TAB_SECTION_LABELS = {
@@ -133,8 +139,21 @@ function initAppTabs(current) {
 
   let tabs = getOpenAppTabs();
   let activeHref = getActiveAppTabHref();
+  let openNew = false;
+  try {
+    openNew = sessionStorage.getItem(APP_TABS_OPEN_NEW_KEY) === "1";
+    sessionStorage.removeItem(APP_TABS_OPEN_NEW_KEY);
+  } catch (e) {}
 
-  if (current && current.href) {
+  if (openNew && !(current && current.href)) {
+    const here = currentPageHref();
+    if (!tabs.some((t) => t.href === here)) {
+      tabs = tabs.concat([{ href: here, label: document.title || here, language: getActiveAppTabLanguage(), section: null }]);
+      saveOpenAppTabs(tabs);
+    }
+    activeHref = here;
+    setActiveAppTabHref(activeHref);
+  } else if (current && current.href) {
     const existingIdx = tabs.findIndex((t) => t.href === current.href);
     const tabRecord = {
       href: current.href,
@@ -142,7 +161,14 @@ function initAppTabs(current) {
       language: current.language || null,
       section: current.section || null,
     };
-    if (existingIdx === -1) {
+    // The tab you're in points at this very page under its old URL
+    // (e.g. a "+ New entry" tab that has just been saved and now has a
+    // real id) — turn that tab into this one instead of adding a twin.
+    const sameTabIdx = tabs.findIndex((t) => t.href === activeHref && activeHref === currentPageHref());
+    if (existingIdx === -1 && sameTabIdx !== -1) {
+      tabs = tabs.slice();
+      tabs[sameTabIdx] = tabRecord;
+    } else if (existingIdx === -1) {
       tabs = tabs.concat([tabRecord]);
     } else {
       // Keep the label fresh — a theme/entry may have been renamed
@@ -362,8 +388,7 @@ function wireAppTabPicker() {
     const lang = getActiveAppTabLanguage() || "es";
 
     if (section === "personal-hub") {
-      resetAppTabPicker();
-      window.location.href = `personal-hub.html?lang=${lang}`;
+      openAppTabFromPicker(`personal-hub.html?lang=${lang}`);
       return;
     }
 
@@ -378,14 +403,24 @@ function wireAppTabPicker() {
       const href = isVocab
         ? `add-vocab.html?id=${encodeURIComponent(created.id)}`
         : `grammar-theme.html?id=${encodeURIComponent(created.id)}`;
-      resetAppTabPicker();
-      window.location.href = href;
+      openAppTabFromPicker(href);
       return;
     }
 
-    resetAppTabPicker();
-    window.location.href = opt.value;
+    openAppTabFromPicker(opt.value);
   });
+}
+
+function openAppTabFromPicker(href) {
+  resetAppTabPicker();
+  try {
+    sessionStorage.setItem(APP_TABS_OPEN_NEW_KEY, "1");
+  } catch (e) {}
+  // Already on exactly that page (e.g. "+ New entry" while on a blank
+  // new entry): a same-URL navigation looks like nothing happened, so
+  // force a real reload.
+  if (href === currentPageHref()) window.location.reload();
+  else window.location.href = href;
 }
 
 function resetAppTabPicker() {

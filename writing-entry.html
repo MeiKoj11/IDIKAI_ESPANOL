@@ -94,6 +94,11 @@
           <span id="view-entry-linked-badge" class="lang-badge" hidden></span>
         </div>
         <div id="view-entry-text" class="writing-view-text-box"></div>
+        <div id="vocab-suggestion-bar" class="vocab-suggestion-bar" hidden>
+          <span id="vocab-suggestion-count"></span>
+          <button type="button" id="vocab-accept-all-btn" class="vocab-suggestion-accept" data-immersion-key="acceptAllButton">Accept all</button>
+          <button type="button" id="vocab-ignore-all-btn" class="vocab-suggestion-ignore" data-immersion-key="ignoreAllButton">Ignore all</button>
+        </div>
         <p id="vocab-check-status" class="hint" hidden></p>
         <p id="grammar-check-status" class="hint" hidden></p>
         <div class="detection-actions">
@@ -106,9 +111,10 @@
           Select any part of your saved entry above, then click "Underline" to toggle underline on it — pure
           formatting, it doesn't affect Vocab check or Grammar check.
         </p>
-        <p class="hint" data-immersion-key="vocabCheckExplainer">
-          Vocab check looks up any <code>&lt;word&gt;</code> still left in your writing and replaces it with the
-          real word — replaced words are shown in red so it's obvious what was corrected.
+        <p class="hint" data-immersion-key="vocabCheckSuggestExplainer">
+          Vocab check looks up any <code>&lt;word&gt;</code> still left in your writing and highlights it with a
+          suggestion. Click a highlighted word to accept or ignore it — accepted words stay red (even when you edit)
+          so you can see which words you didn't know.
         </p>
         <p class="hint" data-immersion-key="grammarCheckExplainer">
           Grammar check needs Vocab check run first (no <code>&lt;word&gt;</code> placeholders left) — it
@@ -189,7 +195,7 @@
 
       <section class="panel" id="entry-reading-panel">
         <h2 data-immersion-key="referenceWhileWritingHeading">Reference while you write</h2>
-        <p class="hint" data-immersion-key="referenceWhileWritingHint">Open a Reading passage (or your linked one) here to reference while you write.</p>
+        <p class="hint" data-immersion-key="referenceWhileWritingHint2">Open a Reading passage, the Storage Locker, your own pasted text or a notes tab here to reference while you write.</p>
         <div id="entry-tab-strip" class="tab-strip">
           <div id="entry-tab-strip-tabs" class="tab-strip-tabs"></div>
           <div class="tab-strip-add">

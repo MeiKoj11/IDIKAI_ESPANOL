@@ -2707,3 +2707,93 @@ textarea.vocab-file-dragover {
   background: #F7F2E4 !important;
 }
 textarea.vocab-file-busy { opacity: 0.7; cursor: wait; }
+
+/* ---------- Writing entry: vocab-check suggestions -------------------- */
+/* Pending suggestion: highlighted (not red) until accepted/ignored. */
+.vocab-suggestion {
+  background: #F6E3A1;
+  border-bottom: 2px solid #C99A1E;
+  border-radius: 4px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.vocab-suggestion:hover { background: #F1D77A; }
+.vocab-suggestion-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 10px 0 0;
+  font-size: 0.92rem; color: var(--ink);
+}
+.vocab-suggestion-popup {
+  position: absolute; z-index: 60;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: var(--card, #F3EEDD);
+  border: 2px solid var(--ink, #221712);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 rgba(34, 23, 18, 0.85);
+  color: var(--ink, #221712);
+}
+.vocab-suggestion-line { margin: 0 0 8px; font-size: 1rem; }
+.vocab-suggestion-line strong { color: #B3261E; }
+.vocab-suggestion-unsure { margin: 0 0 8px; }
+.vocab-suggestion-actions { display: flex; gap: 8px; }
+/* Real <button>s — own background, see the global-button note in CLAUDE.md. */
+.vocab-suggestion-accept,
+.vocab-suggestion-ignore {
+  font-family: "Nunito", sans-serif; font-size: 0.9rem; font-weight: 700;
+  border-radius: 999px; padding: 6px 16px; cursor: pointer;
+}
+.vocab-suggestion-accept { background: var(--red, #771011); color: #F3EEDD; border: 2px solid var(--red, #771011); }
+.vocab-suggestion-ignore { background: transparent; color: var(--ink, #221712); border: 2px solid rgba(34, 23, 18, 0.45); }
+
+/* ---------- Writing entry: red known-gap words while editing ---------- */
+.entry-text-hl-wrap { position: relative; display: block; width: 100%; align-self: stretch; }
+.entry-text-hl-wrap > textarea { display: block; width: 100%; }
+.entry-text-hl-backdrop {
+  position: absolute; top: 0; left: 0;
+  overflow: hidden;
+  white-space: pre-wrap; overflow-wrap: break-word; word-wrap: break-word;
+  color: var(--ink, #221712);
+  border-style: solid; border-color: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.entry-text-hl-word { color: #B3261E; }
+textarea.entry-text-hl-input {
+  position: relative; z-index: 1;
+  background: transparent !important;
+  color: transparent !important;
+  caret-color: var(--ink, #221712);
+}
+textarea.entry-text-hl-input::placeholder { color: rgba(34, 23, 18, 0.45); }
+textarea.entry-text-hl-input::selection { color: transparent; background: rgba(119, 16, 17, 0.25); }
+
+/* ---------- Writing entry: accent buttons ----------------------------- */
+.accent-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 4px; }
+.accent-btn {
+  background: var(--card, #F3EEDD);
+  color: var(--ink, #221712);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 8px;
+  min-width: 34px; padding: 4px 8px;
+  font-family: "Nunito", sans-serif; font-size: 1rem; font-weight: 700;
+  cursor: pointer;
+}
+.accent-btn:hover { border-color: var(--red, #771011); color: var(--red, #771011); }
+.accent-bar-hint { font-size: 0.8rem; color: rgba(34, 23, 18, 0.6); margin-left: 4px; }
+
+/* ---------- Writing entry: own-text / notes reference tabs ------------ */
+.reference-text-title,
+.reference-text-body {
+  display: block; width: 100%; box-sizing: border-box;
+  font-family: "Nunito", sans-serif; font-size: 0.95rem;
+  color: var(--ink, #221712);
+  background: var(--paper, #F7F2E4);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+}
+.reference-text-title { font-weight: 700; }
+.reference-text-body { resize: vertical; line-height: 1.5; }
+.reference-text-delete { margin-top: 2px; }
