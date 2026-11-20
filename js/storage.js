@@ -97,7 +97,9 @@ let _dataLoadFailed = false;
 // should use this instead of its own hardcoded list, so adding a new
 // language later is a one-line change here rather than a hunt across
 // the whole codebase.
-const SUPPORTED_LANGUAGES = ["es", "ja", "fr"];
+// Spanish-only build: Japanese/French code is kept but switched off here.
+// To bring them back, restore ["es", "ja", "fr"].
+const SUPPORTED_LANGUAGES = ["es"];
 
 const STORAGE_KEYS = {
   themes: "vocabBank.themes",
