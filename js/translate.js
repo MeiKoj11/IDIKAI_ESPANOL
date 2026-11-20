@@ -117,12 +117,14 @@ async function checkConjugation(infinitive, tense, person, expected, userAnswer)
 // option. Always returns { text, error } — text is null on failure, and
 // error is a human-readable reason (also logged to the console) so a
 // failure is actually diagnosable instead of a silent dead end.
-async function extractTextFromImage(base64Image, mediaType) {
+// purpose: optional — "list" asks for a vocab-list transcription (one
+// entry per line). mediaType may also be "application/pdf".
+async function extractTextFromImage(base64Image, mediaType, purpose) {
   try {
     const res = await fetch(`${API_BASE}/extract-text`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ image: base64Image, mediaType }),
+      body: JSON.stringify({ image: base64Image, mediaType, purpose }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {

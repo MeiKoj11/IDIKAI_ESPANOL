@@ -209,6 +209,7 @@ const IMMERSION_STRINGS = {
   },
   pasteVocabListPlaceholder: { es: "Pega aquí tu lista de vocabulario...", ja: "ここに単語リストを貼り付けてください…", fr: "Colle ta liste de vocabulaire ici..." },
   extractFlashcardsButton: { es: "Extraer tarjetas", ja: "単語カードを抽出", fr: "Extraire les cartes mémo" },
+  uploadVocabFileButton: { es: "Subir captura / foto / PDF", ja: "スクリーンショット・写真・PDFをアップロード", fr: "Importer capture / photo / PDF" },
   selectAllButton: { es: "Seleccionar todo", ja: "すべて選択", fr: "Tout sélectionner" },
   selectNoneButton: { es: "No seleccionar nada", ja: "選択解除", fr: "Ne rien sélectionner" },
   saveSelectedButton: { es: "Guardar seleccionados", ja: "選択したものを保存", fr: "Enregistrer la sélection" },

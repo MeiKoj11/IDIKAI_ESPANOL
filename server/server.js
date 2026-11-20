@@ -1366,7 +1366,7 @@ function sleep(ms) {
 // Screenshot -> passage text, for the Reading bubble's "upload an image
 // instead of copy/pasting" option. Plain-text response (not JSON) since
 // the only output we want is the transcription itself.
-function callClaudeVisionExtractOnce(base64Image, mediaType) {
+function callClaudeVisionExtractOnce(base64Image, mediaType, purpose) {
   return new Promise((resolve, reject) => {
     if (!API_KEY) {
       reject(new Error("ANTHROPIC_API_KEY is not set — copy .env.example to .env and add your key."));
@@ -1375,15 +1375,18 @@ function callClaudeVisionExtractOnce(base64Image, mediaType) {
 
     const payload = JSON.stringify({
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: purpose === "list" ? 8000 : 4000,
       messages: [
         {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
+            // PDFs go in as a "document" block; everything else is an image.
+            mediaType === "application/pdf"
+              ? { type: "document", source: { type: "base64", media_type: mediaType, data: base64Image } }
+              : { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
             {
               type: "text",
-              text:
+              text: purpose === "list" ? VOCAB_LIST_TRANSCRIBE_PROMPT :
                 "Transcribe all the readable body text in this image exactly as written (fix nothing, " +
                 "don't translate). Preserve paragraph breaks as blank lines, but don't insert a line " +
                 "break just because a line wrapped in the image. Ignore UI chrome, headers/footers, " +
@@ -1445,12 +1448,22 @@ function callClaudeVisionExtractOnce(base64Image, mediaType) {
   });
 }
 
-async function callClaudeVisionExtract(base64Image, mediaType) {
+// Used when the upload is a vocab list (screenshot/photo/PDF) rather than
+// a reading passage: keep each entry and its translation on one line so
+// /extract-vocab-list can pair them up afterwards.
+const VOCAB_LIST_TRANSCRIBE_PROMPT =
+  "This is a vocabulary list (it may be a table, columns, flashcards, a worksheet or handwritten " +
+  "notes). Transcribe every vocabulary entry exactly as written (fix nothing, don't translate), " +
+  "one entry per line, keeping each word/phrase on the same line as its translation or meaning " +
+  "if one is given (e.g. \"el perro - the dog\"). Ignore page numbers, headers/footers, " +
+  "instructions and UI chrome. Respond with ONLY the lines — no commentary, no markdown.";
+
+async function callClaudeVisionExtract(base64Image, mediaType, purpose) {
   const MAX_ATTEMPTS = 3;
   let lastErr;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await callClaudeVisionExtractOnce(base64Image, mediaType);
+      return await callClaudeVisionExtractOnce(base64Image, mediaType, purpose);
     } catch (err) {
       lastErr = err;
       if (!isContentFilterError(err) || attempt === MAX_ATTEMPTS) break;
@@ -2758,7 +2771,7 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      const { image, mediaType } = parsed;
+      const { image, mediaType, purpose } = parsed;
       if (!image || !mediaType) {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "Missing image or mediaType." }));
@@ -2767,7 +2780,7 @@ const server = http.createServer((req, res) => {
 
       console.log("Extracting text from an uploaded screenshot...");
 
-      callClaudeVisionExtract(image, mediaType)
+      callClaudeVisionExtract(image, mediaType, purpose)
         .then((result) => {
           console.log(`  -> extracted ${result.text.length} characters`);
           res.writeHead(200, { "content-type": "application/json" });
