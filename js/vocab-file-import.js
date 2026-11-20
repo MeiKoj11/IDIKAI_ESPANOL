@@ -1,9 +1,9 @@
 /*
   vocab-file-import.js
   --------------------
-  Adds an "Upload screenshot / photo / PDF" button under a vocab-list
-  paste box (add-vocab.html's bulk import, add-random-vocab.html). Each
-  chosen file is transcribed by the server (/extract-text, purpose
+  Makes a vocab-list paste box (add-vocab.html's bulk import,
+  add-random-vocab.html) a drag-and-drop target. Each dropped image/PDF
+  is transcribed by the server (/extract-text, purpose
   "list") and the text is appended to the textarea, so the learner can
   check it before clicking the existing "Extract flashcards" button.
 */
@@ -25,20 +25,10 @@ function attachVocabFileImport(textareaId) {
   if (!textarea || textarea.dataset.fileImportAttached) return;
   textarea.dataset.fileImportAttached = "1";
 
-  const wrap = document.createElement("div");
-  wrap.className = "vocab-file-import";
-
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = VOCAB_FILE_TYPES.join(",");
-  input.multiple = true;
-  input.hidden = true;
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "vocab-file-import-btn";
-  btn.textContent = "Upload screenshot / photo / PDF";
-  btn.dataset.immersionKey = "uploadVocabFileButton";
+  const hint = document.createElement("p");
+  hint.className = "hint vocab-file-drop-hint";
+  hint.textContent = "Or drag a screenshot, photo, PDF or text file onto the box.";
+  hint.dataset.immersionKey = "dropVocabFileHint";
 
   const status = document.createElement("p");
   status.className = "hint";
@@ -49,53 +39,82 @@ function attachVocabFileImport(textareaId) {
     status.textContent = msg || "";
   };
 
-  btn.addEventListener("click", () => input.click());
+  const appendText = (text) => {
+    textarea.value = textarea.value.trim() ? textarea.value.trimEnd() + "\n" + text : text;
+  };
 
-  input.addEventListener("change", async () => {
-    const files = Array.from(input.files || []);
-    input.value = "";
+  async function handleFiles(files) {
     if (!files.length) return;
-
-    btn.disabled = true;
+    textarea.classList.add("vocab-file-busy");
     let added = 0;
     const problems = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       setStatus(`Reading ${file.name} (${i + 1} of ${files.length})...`);
-      if (!VOCAB_FILE_TYPES.includes(file.type)) {
-        problems.push(`${file.name}: use a PNG, JPG, GIF, WEBP or PDF (iPhone HEIC photos: take a screenshot of it instead).`);
-        continue;
-      }
-      if (file.size > VOCAB_FILE_MAX_BYTES) {
-        problems.push(`${file.name}: too large (max 10MB) — try cropping it or splitting the PDF.`);
-        continue;
-      }
       try {
+        // Plain-text files (.txt, .csv, ...) are read straight in — no AI needed.
+        if (file.type.startsWith("text/") || /\.(txt|csv|tsv|md)$/i.test(file.name)) {
+          const text = (await file.text()).trim();
+          if (text) { appendText(text); added++; } else problems.push(`${file.name}: file is empty.`);
+          continue;
+        }
+        if (!VOCAB_FILE_TYPES.includes(file.type)) {
+          problems.push(`${file.name}: can't read this file type — use a screenshot, photo (PNG/JPG), PDF or text file. For Word files, save as PDF first; for iPhone HEIC photos, take a screenshot.`);
+          continue;
+        }
+        if (file.size > VOCAB_FILE_MAX_BYTES) {
+          problems.push(`${file.name}: too large (max 10MB) — try cropping it or splitting the PDF.`);
+          continue;
+        }
         const base64 = await vocabFileToBase64(file);
         const { text, error } = await Translate.extractTextFromImage(base64, file.type, "list");
         if (!text) {
           problems.push(`${file.name}: ${error || "no text found."}`);
           continue;
         }
-        textarea.value = textarea.value.trim() ? textarea.value.trimEnd() + "\n" + text : text;
+        appendText(text);
         added++;
       } catch (e) {
         problems.push(`${file.name}: ${e.message}`);
       }
     }
 
-    btn.disabled = false;
+    textarea.classList.remove("vocab-file-busy");
     const done = added
-      ? `Added text from ${added} file(s) to the box above — check it, then click "Extract flashcards".`
+      ? `Added text from ${added} file(s) — check it, then click "Extract flashcards".`
       : "";
     setStatus([done].concat(problems).filter(Boolean).join(" "));
+  }
+
+  // Drag-and-drop onto the paste box itself.
+  let dragDepth = 0;
+  textarea.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    dragDepth++;
+    textarea.classList.add("vocab-file-dragover");
+  });
+  textarea.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  textarea.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) textarea.classList.remove("vocab-file-dragover");
+  });
+  textarea.addEventListener("drop", (e) => {
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (!files.length) return; // dropped plain text — let the browser insert it
+    e.preventDefault();
+    dragDepth = 0;
+    textarea.classList.remove("vocab-file-dragover");
+    handleFiles(files);
   });
 
-  wrap.appendChild(btn);
-  wrap.appendChild(input);
-  wrap.appendChild(status);
-  textarea.insertAdjacentElement("afterend", wrap);
+  textarea.insertAdjacentElement("afterend", status);
+  textarea.insertAdjacentElement("afterend", hint);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
