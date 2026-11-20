@@ -1,0 +1,2701 @@
+/* ==========================================================================
+   idikai-refresh.css
+   Visual refresh for Idikai. Drop-in: no markup or JS changes.
+
+   Install: on every page, add this AFTER the existing stylesheet link:
+     <link rel="stylesheet" href="css/style.css" />
+     <link rel="stylesheet" href="css/idikai-refresh.css" />
+
+   Also add Nunito to the font link on each page:
+     ...css2?family=Fahkwang:wght@400;500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap
+
+   Styles are keyed to existing classes/ids and to structural selectors
+   (e.g. #grammar-theme-list > li), so JS-generated content is covered
+   whatever class names it uses.
+   ========================================================================== */
+
+:root {
+  --ink: #221712;
+  --paper: #ECE6D3;
+  --card: #F3EEDD;
+  --red: #771011;
+  --dark: #241A13;
+  --accent: #9B2A26;          /* per-language, overridden below */
+  --rule: rgba(34, 23, 18, 0.16);
+  --shadow: 4px 4px 0 rgba(34, 23, 18, 0.88);
+  --shadow-sm: 3px 3px 0 rgba(34, 23, 18, 0.85);
+  --ruled: repeating-linear-gradient(#F3EEDD 0 28px, rgba(34, 23, 18, 0.06) 28px 29px);
+}
+
+.app-topbar.lang-es, body.lang-es { --accent: #9B2A26; }
+.app-topbar.lang-ja, body.lang-ja { --accent: #6B6B3A; }
+.app-topbar.lang-fr, body.lang-fr { --accent: #3E5A73; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Nunito", sans-serif;
+  margin: 0;
+}
+
+h1, h2, h3, h4 { font-family: "Fahkwang", serif; font-weight: 500; }
+
+a { color: var(--red); text-decoration: none; }
+a:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---------- Topbar ------------------------------------------------------ */
+
+.app-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  height: 58px;
+  padding: 0 20px;
+  background: var(--red);
+  color: var(--card);
+  border-bottom: 3px solid var(--ink);
+}
+
+.topbar-lang-label {
+  font-family: "Fahkwang", serif;
+  font-size: 21px;
+  font-weight: 500;
+  color: var(--card);
+  margin-right: auto;
+}
+
+/* Pages that also show a small section label next to the language name
+   in the topbar (currently just writing.html's "Spanish · WRITING") —
+   wraps #topbar-lang-label + a static section span and takes over the
+   margin-right:auto that pins the rest of the bar to the right, since
+   that now needs to apply to the whole pair, not the label alone. */
+.topbar-brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; min-width: 0; }
+.topbar-brand .topbar-lang-label { margin-right: 0; }
+.topbar-section-label {
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--card);
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.topbar-hamburger,
+.topbar-notifications,
+.topbar-todo,
+.topbar-home {
+  /* style.css's original topbar centered the language label and pinned
+     these buttons to the bar's corners with position:absolute — this
+     newer topbar is a plain flex row instead, so that old absolute
+     positioning (plus its left/top/right/transform offsets, which
+     otherwise keep applying since this rule never touched them) has to
+     be explicitly cancelled, or the buttons float off at their old
+     fixed coordinates and overlap the language label instead of
+     sitting in the row like normal flex children. */
+  position: static;
+  top: auto;
+  left: auto;
+  right: auto;
+  transform: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid rgba(243, 238, 221, 0.35);
+  border-radius: 7px;
+  color: var(--card);
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+.topbar-hamburger:hover,
+.topbar-notifications:hover,
+.topbar-todo:hover,
+.topbar-home:hover { background: rgba(243, 238, 221, 0.12); }
+
+.topbar-hamburger { flex-direction: column; gap: 4px; padding: 8px 7px; }
+.topbar-hamburger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: var(--card);
+  border-radius: 2px;
+}
+
+.topbar-notifications svg,
+.topbar-todo svg,
+.topbar-home svg { width: 19px; height: 19px; }
+
+.hub-todo-toggle-count {
+  position: absolute;
+  transform: translate(14px, -14px);
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 2px solid var(--red);
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+.topbar-todo { position: relative; }
+
+/* Dropdowns: language menu, notifications, to-do */
+
+.topbar-menu,
+.hub-todo-panel {
+  position: absolute;
+  top: 62px;
+  min-width: 230px;
+  max-width: min(90vw, 340px);
+  padding: 14px 16px;
+  background: var(--card);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  z-index: 50;
+}
+#topbar-menu { left: 16px; }
+#topbar-notifications-menu,
+.hub-todo-panel { right: 16px; }
+
+.topbar-menu-heading {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+  margin-bottom: 9px;
+}
+
+.topbar-lang-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: "Fahkwang", serif;
+  font-size: 15px;
+  color: var(--ink);
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.topbar-lang-option:hover {
+  border-color: var(--ink);
+  background: rgba(34, 23, 18, 0.05);
+  text-decoration: none;
+}
+.topbar-lang-option-link {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--red);
+  text-decoration: underline;
+}
+.topbar-menu-divider { border: none; border-top: 1px solid var(--rule); margin: 10px 0; }
+.topbar-notifications-empty {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(34, 23, 18, 0.75);
+}
+
+/* To-do panel */
+
+.hub-todo-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.hub-todo-title { font-family: "Fahkwang", serif; font-size: 17px; }
+.hub-todo-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  color: rgba(34, 23, 18, 0.55);
+  cursor: pointer;
+}
+.hub-todo-close:hover { color: var(--red); }
+
+.hub-todo-add-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.hub-todo-add-form input[type="text"],
+.hub-todo-folder-select {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-family: "Nunito", sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+.hub-todo-add-form button[type="submit"] {
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  padding: 9px 15px;
+  cursor: pointer;
+}
+.hub-todo-add-form button[type="submit"]:hover { background: var(--red); border-color: var(--red); }
+
+.hub-todo-groups { margin-top: 12px; }
+.hub-todo-groups li,
+.hub-todo-groups > div > div {
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 0;
+}
+.hub-todo-show-completed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: rgba(34, 23, 18, 0.7);
+}
+
+/* ---------- Tab strip -------------------------------------------------- */
+
+.app-tab-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 10px 20px 0;
+  background: var(--paper);
+  border-bottom: 2px solid var(--ink);
+  overflow-x: auto;
+}
+.app-tab-strip-tabs { display: flex; align-items: flex-end; gap: 4px; }
+
+/* Tabs are generated by app-tabs.js — styled structurally. */
+.app-tab-strip-tabs > * {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--ink);
+  background: rgba(243, 238, 221, 0.45);
+  border: 2px solid var(--ink);
+  border-radius: 10px 10px 0 0;
+  padding: 9px 13px 11px;
+  margin-bottom: -2px;
+  opacity: 0.72;
+  cursor: pointer;
+}
+.app-tab-strip-tabs > *:hover { opacity: 1; }
+.app-tab-strip-tabs > [class*="active"],
+.app-tab-strip-tabs > [aria-current="page"] {
+  background: var(--card);
+  border-bottom-color: var(--card);
+  box-shadow: inset 0 3px 0 var(--accent);
+  opacity: 1;
+}
+.app-tab-strip-tabs button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  padding: 0 2px;
+}
+.app-tab-strip-tabs button:hover { opacity: 1; color: var(--red); }
+
+.tab-bar-plus-btn {
+  font-family: "Nunito", sans-serif;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink);
+  background: transparent;
+  border: 2px dashed rgba(34, 23, 18, 0.35);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  padding: 9px 13px 11px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+.tab-bar-plus-btn:hover { border-color: var(--ink); }
+
+.app-tab-strip-add { position: relative; margin-left: auto; }
+.app-tab-picker-panel {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  z-index: 45;
+}
+.app-tab-picker-panel select {
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
+/* ---------- Page header ------------------------------------------------ */
+
+.app-header {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 26px 20px 0;
+  background: transparent;
+  border: none;
+}
+.app-header h1 {
+  font-size: clamp(28px, 4.4vw, 42px);
+  line-height: 1.1;
+  margin: 8px 0 0;
+  color: var(--ink);
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: rgba(34, 23, 18, 0.65);
+}
+.back-link:hover { color: var(--red); text-decoration: none; }
+/* .back-link is normally an <a>; the conjugation-test "Leave test"
+   control uses it on a real <button> instead (so it can run JS rather
+   than navigate) — same style.css global-button-background risk as
+   .chip/.back-link-as-button elsewhere, so reset explicitly here too. */
+button.back-link { background: transparent; border: none; padding: 0; font: inherit; cursor: pointer; }
+
+main { max-width: 1080px; margin: 0 auto; padding: 22px 20px 72px; }
+
+/* ---------- Panels, buttons, hints ------------------------------------- */
+
+.panel {
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  color: var(--ink);
+}
+
+button, .button {
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  padding: 10px 17px;
+  cursor: pointer;
+}
+button:hover, .button:hover { background: var(--red); border-color: var(--red); }
+
+button.secondary, .secondary {
+  background: transparent;
+  color: var(--ink);
+}
+button.secondary:hover, .secondary:hover {
+  background: rgba(34, 23, 18, 0.05);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+input[type="text"], input[type="search"], textarea, select {
+  font-family: "Nunito", sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 9px;
+  padding: 9px 11px;
+}
+
+.hint, .empty-hint { font-size: 13px; color: rgba(34, 23, 18, 0.65); }
+
+/* ---------- Language picker (index.html) ------------------------------- */
+
+body.picker-body { background: var(--paper); }
+
+.picker-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: clamp(28px, 6vh, 64px) 20px;
+}
+.picker-greeting { font-size: 14px; color: rgba(34, 23, 18, 0.62); margin: 0; }
+.picker-heading {
+  font-size: clamp(30px, 5.2vh, 46px);
+  line-height: 1.08;
+  margin: 10px 0 0;
+  text-align: center;
+}
+
+.picker-options {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: clamp(26px, 5vh, 44px);
+}
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--card);
+  background-image: var(--ruled);
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: var(--shadow);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.picker-option:hover {
+  transform: translate(1px, 1px);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+}
+.picker-option::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--accent);
+}
+.picker-option::after { content: "→"; margin-left: auto; font-size: 19px; color: var(--red); }
+.picker-option.lang-es { --accent: #9B2A26; }
+.picker-option.lang-ja { --accent: #6B6B3A; }
+.picker-option.lang-fr { --accent: #3E5A73; }
+.picker-option-title {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: clamp(21px, 2.9vh, 26px);
+  color: var(--ink);
+}
+.picker-option-native { font-size: 14px; color: rgba(34, 23, 18, 0.6); }
+.picker-foot {
+  font-size: 13px;
+  color: rgba(34, 23, 18, 0.62);
+  margin-top: clamp(22px, 4vh, 34px);
+  border-bottom: 1px solid rgba(34, 23, 18, 0.3);
+  padding-bottom: 2px;
+}
+.picker-foot:hover { color: var(--red); border-color: var(--red); text-decoration: none; }
+
+/* ---------- Language home: bubbles ------------------------------------- */
+
+.lang-home-main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 72px; }
+.lang-home-flower { display: flex; flex-direction: column; gap: 18px; }
+.lang-home-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr));
+  gap: 18px;
+}
+
+.bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 150px;
+  padding: 20px;
+  background: var(--card);
+  background-image: var(--ruled);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.bubble:hover {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0 rgba(34, 23, 18, 0.85);
+  text-decoration: none;
+}
+.bubble::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--accent);
+}
+.bubble.lang-es { --accent: #9B2A26; }
+.bubble.lang-ja { --accent: #6B6B3A; }
+.bubble.lang-fr { --accent: #3E5A73; }
+
+.bubble-title {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: 21px;
+  line-height: 1.2;
+  margin-top: 8px;
+  color: var(--ink);
+}
+.bubble-sub {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgba(34, 23, 18, 0.78);
+  text-wrap: pretty;
+}
+
+.bubble-personal-hub {
+  background: var(--red);
+  background-image: none;
+  color: var(--card);
+  box-shadow: var(--shadow);
+}
+.bubble-personal-hub::before { background: var(--card); border-color: rgba(243, 238, 221, 0.6); }
+.bubble-personal-hub .bubble-title { color: var(--card); }
+.bubble-personal-hub .bubble-sub { color: rgba(243, 238, 221, 0.92); }
+
+.bubble-disabled {
+  background: transparent;
+  background-image: none;
+  border-style: dashed;
+  border-color: rgba(34, 23, 18, 0.4);
+  box-shadow: none;
+  cursor: default;
+}
+.bubble-disabled::before { background: transparent; border-color: rgba(34, 23, 18, 0.4); }
+.bubble-disabled .bubble-title { color: rgba(34, 23, 18, 0.55); }
+.bubble-disabled .bubble-sub { color: rgba(34, 23, 18, 0.5); }
+.bubble-disabled:hover { transform: none; box-shadow: none; }
+
+/* ---------- Grammar: folder list (grammar.html) ------------------------ */
+
+.theme-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 268px), 1fr));
+  gap: 18px;
+}
+.theme-list > li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 176px;
+  padding: 18px;
+  background: var(--card);
+  background-image: var(--ruled);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.theme-list > li > a {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1.18;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.theme-list > li > a:hover { color: var(--red); text-decoration: none; }
+.theme-list > li .hint,
+.theme-list > li > span {
+  align-self: flex-start;
+  margin-top: auto;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--card);
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.theme-list > li button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  padding: 2px 5px;
+  font-size: 13px;
+  color: rgba(34, 23, 18, 0.5);
+}
+.theme-list > li button:hover { background: transparent; color: var(--red); }
+
+/* ---------- Grammar folder: notes (grammar-theme.html) ----------------- */
+
+.grammar-notes-section { background: transparent; border: none; box-shadow: none; padding: 0; }
+
+/* "+ Add note" and the overview links render as .bubble inside a folder —
+   flatten them into single rows rather than tall cards. */
+.grammar-notes-section > .bubble {
+  min-height: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 18px;
+  background-image: none;
+  border-radius: 999px;
+  box-shadow: none;
+  flex-wrap: wrap;
+}
+.grammar-notes-section > .bubble::before { margin: 0; }
+.grammar-notes-section > .bubble .bubble-title { margin-top: 0; font-size: 17px; }
+.grammar-notes-section > .bubble .bubble-sub { font-size: 13px; }
+
+#add-note-link {
+  background: transparent;
+  border-style: dashed;
+  border-color: rgba(34, 23, 18, 0.42);
+}
+#add-note-link:hover { border-color: var(--ink); background: rgba(34, 23, 18, 0.04); transform: none; }
+#add-note-link::before { display: none; }
+
+.word-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.word-list > li {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 18px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  flex-wrap: wrap;
+}
+.word-list > li:hover { background: #E4DCC4; }
+.word-list > li > a {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: 16px;
+  color: var(--ink);
+}
+.word-list > li > a:hover { color: var(--red); text-decoration: none; }
+.word-list > li .hint { margin-left: auto; font-size: 12px; }
+.word-list > li button {
+  background: transparent;
+  border: none;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: rgba(34, 23, 18, 0.6);
+  text-decoration: underline;
+}
+.word-list > li button:hover { background: transparent; color: var(--red); }
+
+/* Tag chips inside note rows */
+.word-list > li [class*="tag"],
+.word-list > li [class*="chip"],
+.word-list > li [class*="badge"] {
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(34, 23, 18, 0.4);
+  color: rgba(34, 23, 18, 0.78);
+  background: transparent;
+  white-space: nowrap;
+}
+
+/* Practice CTA + panel */
+
+.grammar-practice-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin: 14px 0;
+  padding: 18px 20px;
+  background: var(--red);
+  color: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.grammar-practice-cta-title {
+  font-family: "Fahkwang", serif;
+  font-size: 20px;
+  margin: 0;
+}
+.grammar-practice-cta .hint { color: rgba(243, 238, 221, 0.9); }
+.grammar-practice-cta button {
+  margin-left: auto;
+  background: var(--card);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.grammar-practice-cta button:hover { background: var(--paper); color: var(--ink); }
+
+.grammar-practice-panel {
+  margin: 14px 0;
+  padding: 18px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.grammar-practice-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.grammar-practice-header button { margin-left: auto; }
+.grammar-practice-card { display: flex; flex-direction: column; gap: 10px; }
+.grammar-practice-given { font-family: "Fahkwang", serif; font-size: 22px; margin: 0; }
+.grammar-practice-given-furigana { font-size: 13px; color: rgba(34, 23, 18, 0.6); margin: 0; }
+.grammar-practice-prompt-label {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+  margin: 0;
+}
+.grammar-practice-answer-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.grammar-practice-answer-label input { width: 100%; }
+.grammar-practice-feedback {
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  background: rgba(107, 107, 58, 0.12);
+  font-size: 13.5px;
+}
+.detection-actions { display: flex; gap: 8px; }
+
+@media (max-width: 640px) {
+  .app-topbar { gap: 8px; padding: 0 12px; }
+  .topbar-lang-label { font-size: 18px; }
+  main, .app-header, .lang-home-main { padding-left: 14px; padding-right: 14px; }
+}
+
+/* ==========================================================================
+   Design-system primitives (from the Claude Design mockups: language-home,
+   grammar, grammar-theme, conjugation). Ported wholesale so every mockup
+   page shares the exact same card/layout vocabulary — makes each later
+   integration a markup-only change, no new CSS needed per page.
+
+   Deliberately NOT porting the mockups' own .topbar/.icon-btn/.hamburger/
+   .tabstrip/.tab/.picker* rules — the real topbar, tab strip, and language
+   picker already have working structure + styling above, and duplicating
+   those class names here would just create competing definitions.
+   ========================================================================== */
+
+/* ---------- Page head extras -------------------------------------------- */
+
+.pagehead { padding-top: 26px; }
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+}
+.page-title { font-size: clamp(28px, 4.4vw, 42px); line-height: 1.1; margin-top: 8px; }
+.page-sub {
+  font-size: 14.5px;
+  line-height: 1.55;
+  margin: 10px 0 0;
+  max-width: 52ch;
+  color: rgba(34, 23, 18, 0.78);
+  text-wrap: pretty;
+}
+.meta-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.meta-text { font-size: 13px; color: rgba(34, 23, 18, 0.7); }
+
+.dot {
+  display: block;
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--accent);
+}
+.dot-sm { width: 10px; height: 10px; }
+
+/* ---------- Buttons (link-styled, distinct from <button>/.button above) - */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  padding: 11px 18px;
+  cursor: pointer;
+}
+.btn:hover { background: var(--red); border-color: var(--red); color: var(--paper); text-decoration: none; }
+/* Self-sufficient (not just a .btn modifier) — used standalone on real
+   <button> elements (e.g. conjugation-test's Back/Skip/Save-this-test),
+   so it needs every structural property .btn has, not just color/
+   background, or the rest falls through from style.css's global button
+   rule (same class of bug as .chip/.back-link above). */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  background: transparent;
+  color: var(--ink);
+  border: 2px solid rgba(34, 23, 18, 0.35);
+  border-radius: 9px;
+  padding: 11px 18px;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: rgba(34, 23, 18, 0.05); color: var(--ink); border-color: var(--ink); }
+.link-btn {
+  font-size: 12px;
+  color: rgba(34, 23, 18, 0.62);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:hover { color: var(--red); }
+
+/* ---------- Cards --------------------------------------------------------*/
+
+.card {
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+.card-ruled { background-image: var(--ruled); }
+.card-lift { transition: transform 120ms ease, box-shadow 120ms ease; }
+.card-lift:hover { transform: translate(1px, 1px); box-shadow: var(--shadow-sm); text-decoration: none; }
+.card-red { background: var(--red); color: var(--card); }
+.card-red h2, .card-red h3 { color: var(--card); }
+.card-red:hover { color: var(--card); }
+.card-dashed { background: transparent; border-style: dashed; border-color: rgba(34, 23, 18, 0.4); box-shadow: none; }
+.card-dashed:hover { border-color: var(--ink); background: rgba(34, 23, 18, 0.03); }
+.card-title { font-size: 21px; line-height: 1.18; text-wrap: pretty; }
+.card-text { font-size: 13.5px; line-height: 1.5; margin: 6px 0 0; color: rgba(34, 23, 18, 0.78); }
+.card-red .card-text { color: rgba(243, 238, 221, 0.92); }
+/* ---------- Grammar conjugation-note page (Explanation/Examples/Test) --- */
+/* style.css still styles these for the old dark theme (cream text on a
+   translucent-black box); override both background AND text color
+   together here so nothing goes invisible on the light .panel. */
+.conj-note-section {
+  background: var(--paper);
+  border: 1px solid rgba(34, 23, 18, 0.3);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.conj-note-section:last-of-type { margin-bottom: 0; }
+.conj-note-section > summary {
+  font-family: "Fahkwang", serif;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--ink);
+}
+.conj-note-section[open] > summary { margin-bottom: 10px; }
+.conj-note-explanation, .grammar-card-explanation { color: var(--ink); }
+.grammar-card-example {
+  background: var(--card);
+  border-left: 3px solid var(--red);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.grammar-card-example-target { color: var(--ink); }
+.grammar-card-example-translation { color: rgba(34, 23, 18, 0.68); }
+
+
+.pill-tag {
+  display: inline-flex;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--card);
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+/* A "not yet" variant of .pill-tag — same shape, dashed and unfilled,
+   matching .card-dashed's language for "this hasn't happened yet"
+   (writing.html's "DRAFT" badge, as opposed to a checked entry's solid
+   "CHECKED" pill). */
+.pill-tag-outline {
+  color: rgba(34, 23, 18, 0.6);
+  background: transparent;
+  border: 2px dashed rgba(34, 23, 18, 0.4);
+}
+
+/* writing.html's entry cards (.grid-folders > .card.entry-card). */
+.entry-card { display: block; text-decoration: none; color: var(--ink); }
+.entry-card:hover { text-decoration: none; color: var(--ink); }
+.entry-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.entry-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(34, 23, 18, 0.16);
+  font-size: 12px;
+  color: rgba(34, 23, 18, 0.6);
+}
+.chip {
+  display: inline-flex;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(34, 23, 18, 0.4);
+  /* .chip is also used on real <button> elements (the tag-filter row) —
+     without this, style.css's global `button { background: #221712;
+     color: #ECE6D3; }` rule leaves its dark background in place (only
+     background/color are unset here, so the property survives from that
+     earlier same-specificity-ish rule), producing invisible dark text on
+     a dark chip. Same cascade issue as the topbar bug — fixed the same
+     way, by declaring the property explicitly here instead of leaving
+     it to fall through. */
+  background: transparent;
+  color: rgba(34, 23, 18, 0.78);
+  white-space: nowrap;
+}
+.chip-strong { border-color: var(--red); color: var(--red); background: rgba(119, 16, 17, 0.07); }
+.chip-outline-link:hover { border-color: var(--red); color: var(--red); text-decoration: none; }
+/* A tag-filter chip you can click (grammar-theme.html's "All"/tag row) —
+   same pill shape as .chip, just interactive with an active state. */
+button.chip { cursor: pointer; }
+button.chip:hover { border-color: var(--ink); }
+.chip-active, button.chip-active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.chip-active:hover, button.chip-active:hover { border-color: var(--ink); }
+.grammar-theme-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid rgba(34, 23, 18, 0.18);
+}
+.badge-outline {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border: 1px solid rgba(243, 238, 221, 0.55);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.arrow { font-size: 18px; line-height: 1; color: var(--red); }
+.card-red .arrow { color: var(--card); }
+
+/* ---------- Layout helpers ------------------------------------------------*/
+
+.cols { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; padding-top: 22px; }
+.col-main { flex: 1.9 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.col-side { flex: 1 1 230px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.grid-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 185px), 1fr));
+  gap: 16px;
+  max-width: 760px;
+}
+.grid-folders {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 268px), 1fr));
+  gap: 18px;
+}
+.stack { display: flex; flex-direction: column; gap: 9px; }
+.row-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
+.grow { flex: 1; min-width: 240px; }
+
+/* ---------- Pill rows (grammar notes list) --------------------------------*/
+
+.pill-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 10px 18px;
+  flex-wrap: wrap;
+}
+.pill-row:hover { background: #E4DCC4; text-decoration: none; }
+.pill-row-title { font-family: "Fahkwang", serif; font-weight: 500; font-size: 15.5px; color: var(--ink); }
+.pill-row-title-jp { font-size: 19px; }
+.pill-row-tags { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-left: auto; }
+.pill-row-x {
+  font-size: 15px;
+  line-height: 1;
+  color: rgba(34, 23, 18, 0.45);
+  background: transparent;
+  border: none;
+  padding: 2px 2px 2px 6px;
+  cursor: pointer;
+}
+.pill-row-x:hover { color: var(--red); }
+.pill-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  border: 2px dashed rgba(34, 23, 18, 0.42);
+  border-radius: 999px;
+  background: transparent;
+  padding: 11px 18px;
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.pill-add:hover { border-color: var(--ink); background: rgba(34, 23, 18, 0.04); text-decoration: none; color: var(--ink); }
+
+/* ---------- Mistakes card ---------------------------------------------- */
+
+.card-mistakes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(119, 16, 17, 0.08);
+  border: 2px solid var(--red);
+  border-radius: 16px;
+  box-shadow: none;
+  padding: 15px 18px;
+}
+.card-mistakes:hover { background: rgba(119, 16, 17, 0.16); text-decoration: none; }
+.card-mistakes h3 { font-size: 18px; color: var(--red); }
+
+/* ---------- Reference table (conjugation page) -------------------------- */
+
+.ref-card { padding: 0; overflow: hidden; }
+.ref-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 2px solid var(--ink); }
+.ref-head h2 { font-size: 17px; }
+.ref-table {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.8fr) minmax(90px, 1fr) minmax(120px, 1.4fr);
+  font-size: 13.5px;
+}
+.ref-table .th {
+  padding: 9px 14px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.ref-table .td { padding: 12px 14px; border-bottom: 1px solid var(--rule); }
+.ref-table .td-last { border-bottom: none; }
+
+.note-card h2 { font-size: 17px; margin-bottom: 10px; }
+.note-lines { display: flex; flex-direction: column; gap: 9px; font-size: 14px; line-height: 1.55; }
+
+.examples { display: flex; flex-direction: column; gap: 14px; }
+.example { display: flex; flex-direction: column; gap: 4px; padding-left: 14px; border-left: 3px solid var(--accent); }
+.example-jp { font-family: "Fahkwang", serif; font-size: 19px; line-height: 1.4; }
+.example-en { font-size: 13.5px; color: rgba(34, 23, 18, 0.7); }
+
+.title-ruby { display: inline-flex; flex-direction: column; align-items: center; gap: 1px; }
+.title-ruby-kana {
+  font-family: "Fahkwang", serif;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: rgba(34, 23, 18, 0.6);
+}
+.title-ruby-kanji { font-family: "Fahkwang", serif; font-size: clamp(28px, 4.2vw, 40px); line-height: 1.1; color: var(--red); }
+
+/* ---------- language-home.html specific ---------------------------------*/
+
+.lang-home-main { max-width: 1080px; padding: 26px 20px 72px; }
+
+/* Inline to-do panel: the same #hub-todo-panel markup/JS every other
+   page floats over the topbar, but placed directly in the page and
+   always visible here — zero out the floating box chrome so it just
+   sits as plain content inside its enclosing .card. */
+.hub-todo-panel--inline {
+  position: static;
+  z-index: auto;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.hub-todo-panel--inline .hub-todo-header { margin-bottom: 10px; cursor: default; }
+.hub-todo-panel--inline .hub-todo-title { font-family: "Fahkwang", serif; font-size: 17px; font-weight: 500; }
+
+@media (max-width: 640px) {
+  .cols { padding-top: 16px; }
+  .grid-tiles { max-width: none; }
+}
+
+/* ==========================================================================
+   Test-mode screens (japanese-conjugation-test.html, japanese-sentence-
+   test.html) — ported from the "Website redesign discussion" mockups'
+   css/test-mockup.css. Every interactive pill/chip/dot below is a real
+   <button> in the pages that use these classes, and style.css has a
+   global `button { background: #221712; color: #ECE6D3; }` rule — so
+   (learned from the earlier .chip bug) every rule here declares its own
+   background AND color explicitly rather than relying on only one of
+   them, so nothing falls through to that dark default.
+   ========================================================================== */
+
+.wrap-narrow { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+.wrap-focus { max-width: 760px; margin: 0 auto; padding: 22px 20px 0; }
+.test-stack { display: flex; flex-direction: column; gap: 16px; padding-top: 24px; padding-bottom: 72px; }
+.stack-lg { display: flex; flex-direction: column; gap: 14px; }
+.label-xs {
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.55);
+}
+
+.stage-badge {
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--card);
+  background: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 5px 13px;
+}
+.stage-badge.is-red { background: var(--red); }
+
+/* ---------- setup ---------- */
+
+.test-card { padding: 18px; }
+.test-card-label {
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+}
+.test-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.select-pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  line-height: 1;
+  padding: 10px 15px;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 2px solid rgba(34, 23, 18, 0.3);
+  background: transparent;
+  color: rgba(34, 23, 18, 0.78);
+}
+.select-pill:hover { border-color: var(--ink); background: transparent; color: var(--ink); }
+.select-pill.is-on { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.select-pill.is-on:hover { background: var(--ink); color: var(--paper); }
+.select-pill .tick {
+  display: block;
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  border: 2px solid rgba(34, 23, 18, 0.45);
+  background: transparent;
+}
+.select-pill.is-on .tick { border-color: var(--card); background: var(--accent); }
+.pill-kanji { font-family: "Fahkwang", serif; font-size: 13px; opacity: 0.7; }
+
+.source-list { display: flex; flex-direction: column; margin-top: 10px; }
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  padding: 11px 2px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.source-row:hover { background: rgba(34, 23, 18, 0.03); }
+.checkbox {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  border: 2px solid var(--ink);
+  background: transparent;
+}
+.checkbox.is-on { background: var(--accent); }
+.source-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.source-name { font-size: 13.5px; }
+.source-hint { font-size: 12px; color: rgba(34, 23, 18, 0.6); }
+.source-count { margin-left: auto; font-size: 12px; color: rgba(34, 23, 18, 0.55); white-space: nowrap; }
+
+.start-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 4px; }
+.btn-lg { font-size: 14px; padding: 13px 26px; }
+.btn-red { background: var(--red); color: var(--card); border-color: var(--ink); }
+.btn-red:hover { background: #5E0D0E; border-color: var(--ink); }
+
+.saved-tests { margin-top: 12px; }
+.saved-tests-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.saved-tests-head h2 { font-family: "Fahkwang", serif; font-weight: 500; font-size: 17px; }
+.score-badge {
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 11px;
+  border-radius: 999px;
+  color: var(--card);
+  background: var(--accent);
+  border: 2px solid var(--ink);
+  white-space: nowrap;
+}
+.score-badge.is-bad { background: var(--red); }
+
+/* ---------- focus (one question at a time) ---------- */
+
+.focus-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.toggle-pill {
+  font-family: "Nunito", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 9px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 2px solid rgba(34, 23, 18, 0.3);
+  background: transparent;
+  color: rgba(34, 23, 18, 0.7);
+}
+.toggle-pill.is-on { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+
+.progress-row { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+.progress-label {
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+  white-space: nowrap;
+}
+.progress-track {
+  flex: 1;
+  min-width: 80px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(34, 23, 18, 0.14);
+  border: 1px solid rgba(34, 23, 18, 0.2);
+  overflow: hidden;
+}
+.progress-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+
+.focus-card {
+  margin-top: 18px;
+  border: 2px solid var(--ink);
+  border-radius: 20px;
+  background: var(--card);
+  background-image: repeating-linear-gradient(#F3EEDD 0 34px, rgba(34, 23, 18, 0.05) 34px 35px);
+  padding: clamp(22px, 4.5vw, 40px) clamp(20px, 4vw, 34px) clamp(20px, 4vw, 30px);
+  box-shadow: 5px 5px 0 rgba(34, 23, 18, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 340px;
+}
+.focus-card.is-left { align-items: stretch; text-align: left; min-height: 0; }
+
+.focus-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: "Nunito", sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(34, 23, 18, 0.6);
+}
+.focus-kicker .dot-sm {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--accent);
+}
+.focus-target {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: clamp(20px, 3.4vw, 27px);
+  line-height: 1.2;
+  margin-top: 8px;
+  color: var(--red);
+}
+.focus-of { font-size: 12.5px; margin-top: 6px; color: rgba(34, 23, 18, 0.6); }
+.focus-prompt {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: clamp(34px, 6.4vw, 56px);
+  line-height: 1.12;
+  margin-top: 6px;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.focus-input {
+  width: 100%;
+  max-width: 420px;
+  margin-top: clamp(22px, 4vw, 32px);
+  font-family: "Fahkwang", serif;
+  font-size: 26px;
+  text-align: center;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.focus-textarea {
+  width: 100%;
+  margin-top: 20px;
+  font-family: "Fahkwang", serif;
+  font-size: 21px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  padding: 14px 16px;
+  resize: vertical;
+}
+.focus-hint-slot { margin-top: 14px; min-height: 44px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.infinitive-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1.5px dashed rgba(34, 23, 18, 0.4);
+  border-radius: 12px;
+}
+.infinitive-word { font-family: "Fahkwang", serif; font-size: 21px; }
+.infinitive-kana { font-family: "Fahkwang", serif; font-size: 14px; letter-spacing: 0.06em; color: rgba(34, 23, 18, 0.65); }
+
+.sentence-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.3em;
+  row-gap: 2px;
+  margin-top: 16px;
+}
+.word {
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: clamp(23px, 3.6vw, 32px);
+  line-height: 1.3;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: default;
+}
+.word.has-lookup { border-bottom-color: rgba(34, 23, 18, 0.4); border-bottom-style: dotted; cursor: pointer; }
+.word.is-active { background: rgba(107, 107, 58, 0.3); }
+.sentence-hint { font-size: 12px; margin-top: 8px; color: rgba(34, 23, 18, 0.55); }
+
+.focus-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 18px; }
+.focus-actions .btn-ghost { border-radius: 10px; padding: 12px 20px; font-size: 13px; }
+
+.dot-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 22px;
+  padding: 16px 0 72px;
+  border-top: 2px solid rgba(34, 23, 18, 0.18);
+}
+.q-dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-family: "Nunito", sans-serif;
+  font-size: 12.5px;
+  cursor: pointer;
+  border: 2px solid rgba(34, 23, 18, 0.3);
+  background: transparent;
+  color: rgba(34, 23, 18, 0.7);
+}
+.q-dot:hover { background: transparent; border-color: var(--ink); color: var(--ink); }
+.q-dot.is-answered { background: var(--accent); color: var(--card); border-color: rgba(34, 23, 18, 0.3); }
+.q-dot.is-skipped { border-color: var(--red); color: var(--red); }
+.q-dot.is-current { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(34, 23, 18, 0.18); }
+
+/* ---------- lookup ---------- */
+
+.lookup-strip {
+  margin-top: 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 13px 15px;
+}
+.lookup-strip.is-sticky { position: sticky; top: 70px; z-index: 20; border-radius: 14px; box-shadow: 4px 4px 0 rgba(34, 23, 18, 0.5); }
+
+/* japanese-sentence-test.html's #lookup-panel/#mistake-panel keep the
+   pre-redesign behavior of floating above the page content near the
+   bottom of the viewport (previously via legacy style.css's
+   .lookup-panel position:sticky/bottom:0 full-width bar) rather than
+   sitting inline in the document flow the way .lookup-strip.is-sticky
+   does when it's embedded in a mockup card — restyled to the mockup's
+   dark lookup-strip look, but still a floating overlay, per the
+   established "keep floating panels floating" rule. */
+#lookup-panel.lookup-strip,
+#mistake-panel.lookup-strip {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 39;
+  width: min(560px, calc(100vw - 32px));
+  max-height: 72vh;
+  overflow-y: auto;
+  margin-top: 0;
+  box-shadow: 4px 4px 0 rgba(34, 23, 18, 0.5);
+}
+.lookup-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.lookup-ja { font-family: "Fahkwang", serif; font-size: 21px; }
+.lookup-kana { font-size: 12.5px; opacity: 0.75; }
+.lookup-close {
+  font-size: 12px;
+  color: var(--paper);
+  background: transparent;
+  border: 1px solid rgba(236, 230, 211, 0.4);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.lookup-close:hover { background: rgba(236, 230, 211, 0.12); border-color: rgba(236, 230, 211, 0.4); color: var(--paper); }
+.lookup-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(236, 230, 211, 0.2);
+}
+.lookup-save .label-xs { color: rgba(236, 230, 211, 0.6); }
+.theme-chip {
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1.5px solid rgba(236, 230, 211, 0.45);
+  background: transparent;
+  color: var(--paper);
+}
+.theme-chip:hover { background: rgba(236, 230, 211, 0.12); border-color: rgba(236, 230, 211, 0.45); color: var(--paper); }
+.theme-chip.is-on { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.theme-chip.is-new { border-style: dashed; }
+
+/* ---------- loading ---------- */
+
+.loading-main {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 40px 20px 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+.spinner {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(34, 23, 18, 0.18);
+  border-top-color: var(--red);
+  animation: idikai-spin 900ms linear infinite;
+}
+@keyframes idikai-spin { to { transform: rotate(360deg); } }
+.loading-title { font-family: "Fahkwang", serif; font-weight: 500; font-size: 22px; }
+.loading-text { font-size: 14px; line-height: 1.6; margin: 0; max-width: 44ch; color: rgba(34, 23, 18, 0.75); text-wrap: pretty; }
+
+/* ---------- results / marking ---------- */
+
+.score-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  background: var(--card);
+  background-image: var(--ruled);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.score-figure { display: flex; flex-direction: column; gap: 2px; }
+.score-big { font-family: "Fahkwang", serif; font-weight: 500; font-size: 40px; line-height: 1; }
+.score-divider { width: 2px; align-self: stretch; background: var(--rule); }
+.score-note { flex: 1; min-width: 180px; font-size: 13.5px; line-height: 1.55; margin: 0; color: rgba(34, 23, 18, 0.78); text-wrap: pretty; }
+
+.mark-card {
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  background: var(--card);
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+}
+.mark-card.is-wrong { border-color: var(--red); }
+.mark-top { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.mark-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  font-size: 12.5px;
+  color: var(--ink);
+  background: transparent;
+}
+.mark-num.is-right { background: var(--accent); color: var(--card); }
+.mark-num.is-wrong { background: var(--red); color: var(--card); }
+.mark-q { flex: 1; min-width: 200px; }
+.mark-verb-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.mark-verb { font-family: "Fahkwang", serif; font-size: 26px; line-height: 1.2; }
+.mark-sentence { font-size: 14.5px; line-height: 1.5; }
+.mark-asked { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.chip-accent { border-color: var(--accent); background: rgba(107, 107, 58, 0.14); color: var(--ink); }
+
+.mark-answer-col { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.mark-block { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.mark-answer {
+  font-family: "Fahkwang", serif;
+  font-size: 19px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid rgba(34, 23, 18, 0.3);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.mark-answer.is-wrong { border-color: var(--red); text-decoration: line-through; }
+.mark-answer.is-blank { font-family: "Nunito", sans-serif; font-size: 13.5px; color: rgba(34, 23, 18, 0.55); }
+.mark-verdict-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.verdict {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--card);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.verdict.is-right { background: var(--accent); }
+.verdict.is-wrong { background: var(--red); }
+.mark-correct { font-family: "Fahkwang", serif; font-size: 17px; }
+
+.mark-key { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; padding-left: 14px; border-left: 3px solid var(--accent); }
+.key-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px; }
+.key-word {
+  font-family: "Fahkwang", serif;
+  font-size: 20px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: default;
+}
+.key-word.has-lookup { border-bottom-color: rgba(34, 23, 18, 0.45); border-bottom-style: dotted; cursor: pointer; }
+.key-note { font-size: 13px; line-height: 1.5; margin-top: 4px; color: rgba(34, 23, 18, 0.7); }
+
+.judge-row { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 16px; }
+.judge {
+  font-size: 13px;
+  line-height: 1;
+  padding: 11px 17px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 2px solid rgba(34, 23, 18, 0.3);
+  background: transparent;
+  color: rgba(34, 23, 18, 0.75);
+}
+.judge:hover { border-color: var(--ink); background: transparent; color: var(--ink); }
+.judge.is-right { background: var(--accent); border-color: var(--ink); color: var(--card); }
+.judge.is-wrong { background: var(--red); border-color: var(--ink); color: var(--card); }
+
+.save-mistake {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--red);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.save-mistake:hover { background: transparent; color: var(--red); }
+.save-box { display: block; width: 15px; height: 15px; border-radius: 4px; border: 2px solid var(--red); background: transparent; }
+
+/* ---------- Writing entry: Helper Notebook vocab list ------------------ */
+/* The bracketed-word info (English word / resolved target word / furigana)
+   was inheriting style.css's old dark-theme .helper-word-target/-furigana
+   colors (#C0BFB2, meant for light-on-dark), which read as washed-out gray
+   on the new light card. Recolored to match .corrected-word's red — the
+   same red a Vocab-check correction gets in the entry text itself, so a
+   word here and its match in the entry read as the same "thing".
+   Add to Vocab / +Note / Delete (.helper-word-actions button) are
+   deliberately left alone — only the word info itself changes color. */
+.helper-word-item .word-label,
+.helper-word-target,
+.helper-word-furigana {
+  color: #B3261E;
+}
+
+/* ---------- Writing/Speaking entry: "Reference while you write/speak" -- */
+/* This panel's tab strip + content box were still the legacy dark
+   #entry-tab-strip (#221712 black) / .entry-tab-content (#5F0D0E maroon)
+   pairing, clashing with the redesigned beige page around them. Recolored
+   to the same paper/ink look as the entry's own text box
+   (.writing-view-text-box) so the panel reads as part of the page rather
+   than a leftover dark box; the heading itself uses the design system's
+   red like other section titles. Shared by writing-entry.html and
+   speaking-entry.html (#entry-reading-panel/#entry-tab-strip/
+   #entry-tab-content are the same ids on both pages). */
+#entry-reading-panel > h2 {
+  color: var(--red);
+}
+#entry-tab-strip {
+  background: var(--card);
+  border-bottom: 2px solid var(--ink);
+  border-radius: 8px 8px 0 0;
+}
+#entry-tab-strip .vocab-tab {
+  background: var(--paper);
+  color: var(--ink);
+}
+#entry-tab-strip .vocab-tab:hover {
+  background: var(--card);
+}
+#entry-tab-strip .vocab-tab.active {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  border-top-color: var(--red);
+}
+#entry-tab-content {
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+}
+#entry-tab-content h3 {
+  color: var(--ink);
+}
+
+.result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0 72px; }
+
+
+/* ---------- "How to use" help button + modal ------------------------------
+   A small red pill button placed next to a page's <h1> (Personal Hub,
+   Writing, Grammar, Vocab, Reading). Clicking it opens a centered modal
+   in front of the page (no navigation) explaining how that section works.
+   Generic + reusable: any page can add a .howto-btn with
+   data-howto-trigger="<overlay-id>" plus a matching .howto-overlay — see
+   js/howto.js for the (also generic) open/close wiring.                  */
+
+.howto-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Nunito", sans-serif;
+  font-weight: 700;
+  font-size: 12.5px;
+  background: var(--red);
+  color: var(--paper);
+  border: 2px solid var(--red);
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+.howto-btn:hover { background: #5c0c0d; border-color: #5c0c0d; color: var(--paper); }
+
+/* Sits a howto-btn on the same line as an <h1> regardless of whatever
+   layout (flex row header, or a stacked pagehead column) the page
+   already uses around its title. */
+.title-with-howto { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.howto-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 23, 18, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+.howto-overlay[hidden] { display: none; }
+
+body.howto-open { overflow: hidden; }
+
+.howto-modal {
+  background: var(--paper);
+  border: 5px solid var(--red);
+  border-radius: 14px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 26px 28px 30px;
+  box-shadow: 8px 8px 0 rgba(34, 23, 18, 0.18);
+  color: #000;
+}
+.howto-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+.howto-modal-title {
+  font-family: "Fahkwang", serif;
+  font-size: 21px;
+  line-height: 1.2;
+  color: #000;
+  margin: 0;
+}
+.howto-modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-family: "Nunito", sans-serif;
+}
+.howto-modal-close:hover { background: var(--red); border-color: var(--red); }
+.howto-modal-body { color: #000; font-size: 14.5px; line-height: 1.6; }
+.howto-modal-body p { margin: 0 0 14px; }
+.howto-modal-body p:last-child { margin-bottom: 0; }
+
+
+/* ---------- Conjugation/sentence-test setup screen readability -----------
+   style.css (legacy dark theme) set these to a cream color for a dark
+   background; the setup card is light now (.panel), so override to ink. */
+.tenses-test-group-heading,
+.tenses-test-section-head {
+  color: var(--ink);
+}
+
+
+/* ---------- Writing entry: color pass (boxes + helper labels) ------------
+   The entry text boxes, the writing textarea, and the Helper Notebook's
+   own textareas had no accent color at all; and "Helper Notebook" /
+   "Vocab from brackets" / "Notes for yourself" / "Questions for your
+   teacher" were plain, uncolored headings. Both now use the same brand
+   red used elsewhere (buttons, page accents). Shared across all three
+   languages since writing-entry.html has no per-language triplet. */
+.writing-view-text-box {
+  border: 2px solid var(--red);
+}
+.writing-textarea,
+.helper-notes-textarea {
+  border: 2px solid var(--red);
+}
+.writing-helper-panel h2,
+.helper-section-title {
+  color: var(--red);
+}
+
+
+/* ---------- Main Hub tiles (personal-hub.html) ----------------------------
+   Simple icon + title + description tile, red-bordered instead of the
+   default ink border. Reused as-is for any future page that wants the
+   same "pick a destination" tile pattern. */
+.card-border-red { border-color: var(--red); }
+
+.main-hub-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.tile-icon-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  margin-bottom: 14px;
+  flex: 0 0 auto;
+}
+.tile-icon-circle svg { width: 26px; height: 26px; }
+
+/* ---------- Storage Locker (dedicated page) ------------------------------ */
+.locker-actions-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+.locker-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  margin-top: 8px;
+  align-items: start;
+}
+.locker-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.locker-panel-title { font-size: 18px; margin: 0; color: var(--ink); }
+.locker-count { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(34, 23, 18, 0.55); margin-left: 8px; }
+.locker-search {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: "Nunito", sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid rgba(34, 23, 18, 0.25);
+  border-radius: 9px;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+}
+.locker-search::placeholder { color: rgba(34, 23, 18, 0.45); }
+.locker-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.locker-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(34, 23, 18, 0.14);
+}
+.locker-item:last-child { border-bottom: none; }
+.locker-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.locker-item-icon svg { width: 17px; height: 17px; }
+.locker-item-body { flex: 1; min-width: 0; }
+.locker-item-title { font-weight: 700; color: var(--ink); text-decoration: none; }
+.locker-item-title:hover { color: var(--red); }
+.locker-item-sub { font-size: 12px; color: rgba(34, 23, 18, 0.6); margin-top: 2px; }
+.locker-item-note { font-size: 12.5px; color: rgba(34, 23, 18, 0.75); margin-top: 3px; }
+.locker-item-actions { flex: 0 0 auto; display: flex; gap: 12px; padding-top: 3px; }
+.locker-empty { font-size: 13.5px; color: rgba(34, 23, 18, 0.55); padding: 8px 0; }
+.reading-progress-wrap { display: flex; flex-direction: column; gap: 5px; flex: 0 0 150px; }
+.reading-progress-track { height: 6px; border-radius: 4px; background: rgba(34, 23, 18, 0.14); overflow: hidden; }
+.reading-progress-fill { height: 100%; background: var(--red); }
+.reading-progress-label { font-size: 11px; color: rgba(34, 23, 18, 0.65); }
+#passage-list.locker-list > .locker-item { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .reading-progress-wrap { flex-basis: 100%; order: 3; }
+}
+
+.locker-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 16px;
+  max-width: 420px;
+}
+.locker-add-form input, .locker-add-form select {
+  font-family: "Nunito", sans-serif;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: #fff;
+  border: 2px solid rgba(34, 23, 18, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.locker-add-form-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+/* ---------- Bubbles page (dedicated sticky-note canvas) ------------------ */
+.bubble-toolbar { display: flex; align-items: center; gap: 14px; margin-top: 20px; flex-wrap: wrap; }
+.bubble-count-text { font-size: 12.5px; color: rgba(34, 23, 18, 0.6); }
+.bubble-canvas {
+  position: relative;
+  margin-top: 18px;
+  min-height: 560px;
+  background: var(--paper);
+  background-image: radial-gradient(rgba(34, 23, 18, 0.18) 1px, transparent 1px);
+  background-size: 22px 22px;
+  border: 2px solid var(--ink);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.bubble-note {
+  position: absolute;
+  width: 220px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+}
+.bubble-note.bubble-yellow { background: #F5E27A; }
+.bubble-note.bubble-green { background: #D9E4CE; }
+.bubble-note.bubble-cream { background: var(--card); }
+.bubble-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(34, 23, 18, 0.25);
+  cursor: grab;
+  user-select: none;
+}
+.bubble-head:active { cursor: grabbing; }
+.bubble-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--ink); background: transparent; flex: 0 0 auto; }
+.bubble-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.bubble-close:hover { color: var(--red); }
+.bubble-title-input {
+  font-family: "Fahkwang", sans-serif;
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 8px 10px 2px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.bubble-content {
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 0 10px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 70px;
+}
+
+/* ---------- Class Notebook toolbar ---------------------------------------*/
+.notebook-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 20px auto 0;
+  padding: 10px 14px;
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  max-width: 1100px;
+}
+.notebook-toolbar-btn {
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+}
+.notebook-toolbar-btn:hover { background: var(--ink); color: var(--paper); }
+.notebook-toolbar-spacer { flex: 1; }
+.notebook-toolbar-action {
+  font-family: "Nunito", sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  background: var(--red);
+  color: var(--paper);
+  border: 2px solid var(--red);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.notebook-toolbar-action:hover { opacity: 0.9; }
+.notebook-page-editable { cursor: text; }
+.notebook-page-editable:empty:before {
+  content: attr(data-placeholder);
+  color: rgba(34, 23, 18, 0.4);
+}
+
+/* ---------- Class Notebook: inline links to other sections -------------- */
+.notebook-toolbar-btn.active {
+  background: var(--red);
+  color: var(--paper);
+  border-color: var(--red);
+}
+.notebook-book.link-armed .notebook-page-editable {
+  cursor: crosshair;
+}
+.notebook-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 2px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 2px solid var(--red);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+}
+.notebook-link-icon:hover {
+  background: var(--red);
+  color: var(--paper);
+}
+.notebook-link-icon.notebook-link-broken {
+  border-style: dashed;
+  border-color: rgba(34, 23, 18, 0.4);
+  color: rgba(34, 23, 18, 0.4);
+  background: transparent;
+}
+.notebook-link-icon.notebook-link-broken:hover {
+  background: rgba(34, 23, 18, 0.08);
+  color: rgba(34, 23, 18, 0.6);
+}
+.notebook-link-popover {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  padding: 5px;
+  gap: 2px;
+  background: var(--card);
+  border: 2px solid #7A5A45;
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 #7A5A45;
+}
+.notebook-link-popover button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-family: "Nunito", sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+.notebook-link-popover button:hover { background: #E4DCC4; }
+.notebook-link-popover button.danger-option { color: var(--red); }
+.notebook-link-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(34, 23, 18, 0.55);
+  padding: 1rem;
+}
+.notebook-link-modal-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: 100%;
+  max-width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 1.3rem;
+  background: var(--card);
+  border: 2px solid #7A5A45;
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+.notebook-link-modal-box h2 {
+  margin: 0;
+  font-family: "Fahkwang", serif;
+  font-weight: 500;
+  font-size: 1.3rem;
+  color: var(--ink);
+}
+.notebook-link-modal-box .hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(34, 23, 18, 0.6);
+}
+.notebook-link-modal-box button.link-option {
+  width: 100%;
+  text-align: left;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid #7A5A45;
+  border-radius: 9px;
+  padding: 10px 14px;
+  font-family: "Nunito", sans-serif;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.notebook-link-modal-box button.link-option:hover {
+  border-color: var(--red);
+  background: #E4DCC4;
+}
+.notebook-link-modal-box button.link-option.link-option-primary {
+  background: var(--red);
+  color: var(--paper);
+  border-color: var(--red);
+  font-weight: 700;
+}
+.notebook-link-modal-box button.link-option.link-option-primary:hover {
+  opacity: 0.9;
+}
+.notebook-link-modal-box .link-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.notebook-link-modal-box input[type="text"] {
+  font-family: "Nunito", sans-serif;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid #7A5A45;
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.notebook-link-modal-box .link-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.notebook-link-modal-box .link-modal-actions button {
+  font-family: "Nunito", sans-serif;
+  font-weight: 700;
+  border-radius: 9px;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+.notebook-link-modal-box .link-modal-actions .secondary {
+  background: transparent;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+}
+.notebook-link-modal-box .link-modal-actions .primary {
+  background: var(--red);
+  border: 2px solid var(--red);
+  color: var(--paper);
+}
+.notebook-link-back-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  color: rgba(34, 23, 18, 0.6);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+}
+.notebook-link-back-btn:hover { color: var(--red); }
+
+/* ---------- Reading: image dropzone (fills with header red) -------------- */
+.image-dropzone {
+  background: var(--red);
+  border: 2px dashed var(--paper);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px 20px;
+}
+.image-dropzone.dragover { background: #5c0c0d; border-color: var(--paper); }
+.dropzone-hint {
+  margin: 0;
+  font-family: "Fahkwang", sans-serif;
+  font-size: clamp(20px, 3vw, 26px);
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.25;
+}
+.file-choose-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: var(--ink);
+  font-family: "Nunito", sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.file-choose-label:hover { background: var(--paper); }
+.file-choose-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Add Random Vocab — per-row theme picker -------------------- */
+/* Sits inside .bulk-import-row (style.css) alongside the existing
+   target-lang/English/furigana <input>s, which already get flex:1 there
+   — give the select its own sane width instead of shrinking to fit. */
+.bulk-import-theme-select {
+  flex: 0 0 auto;
+  min-width: 140px;
+  font-family: "Nunito", sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid rgba(34, 23, 18, 0.35);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* ---------- Vocab word list — bulk-select checkbox ---------------------- */
+/* Groups the new checkbox with .word-main inside one wrapper so
+   .word-item (style.css: display:flex; justify-content:space-between)
+   still only ever sees two children — this wrapper and .word-actions —
+   exactly as before, on every page that reuses .word-item (Storage
+   Locker included), whether or not a given row has a checkbox. */
+.word-left { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.word-select-checkbox { flex: 0 0 auto; margin-top: 3px; }
+
+/* ---------- Vocab Bank theme/folder tiles — parchment-card style ------- */
+/* Matches the VOCAB2909 mockup Mei supplied (2026-09-29). Scoped to
+   #theme-list, which js/vocab-app.js's renderThemeList() uses for every
+   tile it builds -- top-level themes on vocab.html, a folder's own
+   contents on theme.html (which mirrors vocab.html's layout, see
+   applyActiveThemeToUI), and any depth of sub-folder, since it's the
+   same shared function and the same .theme-item/.theme-name/.theme-meta
+   classes every time. So this one rule set is what "every theme and
+   folder, existing or new" actually resolves to -- no JS/id/behaviour
+   changes, purely a re-skin of the existing hooks. See CLAUDE.md for
+   the short pointer back to this block. */
+#themes-section {
+  background: var(--card);
+  border: 2px solid #6A3B21;
+  box-shadow: 4px 4px 0 rgba(34, 23, 18, 0.88);
+}
+#themes-section > h2 { color: var(--ink); }
+#themes-section > .hint { color: #4A3226; }
+#theme-list > li.theme-item {
+  background: var(--card);
+  border: 2px solid #7A5A45;
+  border-left: 2px solid #7A5A45;
+  border-radius: 14px;
+  box-shadow: none;
+  background-image: none;
+  color: var(--ink);
+  padding: 24px;
+  min-height: 120px;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+#theme-list > li.theme-item:hover,
+#theme-list > li.theme-item:focus-visible {
+  background: var(--card);
+  border-color: var(--red);
+  transform: translateY(-2px);
+  box-shadow: 3px 3px 0 #7A5A45;
+}
+#theme-list > li.theme-item:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 3px;
+}
+#theme-list > li.theme-item.lang-es,
+#theme-list > li.theme-item.lang-ja,
+#theme-list > li.theme-item.lang-fr {
+  border-left-color: #7A5A45;
+}
+#theme-list > li.theme-item.active {
+  background: var(--card);
+  border-color: var(--red);
+}
+#theme-list > li.theme-item-folder,
+#theme-list > li.theme-item-folder:hover {
+  background: var(--card);
+}
+#theme-list .theme-name {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  padding-right: 28px;
+  align-self: stretch;
+  color: var(--red);
+  font-family: "Fahkwang", serif;
+  font-weight: 600;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+/* Plain text now (renderThemeList() no longer builds separate
+   lang-badge/word-count-badge child spans here) -- no pill/chip
+   styling, just muted ink text matching the mockup's count line. */
+#theme-list .theme-meta {
+  display: block;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  color: rgba(34, 23, 18, 0.6);
+  font-family: "Nunito", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+/* The "..." edit button sits at the tile's top-right corner, as in the
+   mockup, instead of flowing at the bottom of the card -- .theme-item
+   is already position:relative (see the generic .theme-list > li rule
+   above), so this just detaches the wrap from the flex flow. */
+#theme-list .theme-edit-wrap {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+}
+#theme-list .theme-edit-icon-btn {
+  background: transparent;
+  border: none;
+  color: rgba(34, 23, 18, 0.55);
+  padding: 2px 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+#theme-list .theme-edit-icon-btn:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--red);
+}
+/* The button moved to the top of the card, so its popover now opens
+   downward (top-anchored) instead of upward -- matches the mockup and
+   keeps it from popping off above the tile. */
+#theme-list .theme-edit-menu {
+  top: calc(100% + 5px);
+  bottom: auto;
+  right: 0;
+  background: var(--card);
+  border: 2px solid #7A5A45;
+  box-shadow: 3px 3px 0 #7A5A45;
+}
+#theme-list .theme-edit-menu button:hover {
+  background: #E4DCC4;
+}
+#theme-list .theme-edit-menu button.danger-option {
+  color: var(--red);
+}
+#theme-list .delete-theme-btn {
+  color: var(--card);
+  background: transparent;
+  border: none;
+  text-decoration: underline;
+}
+#theme-list .delete-theme-btn:hover {
+  color: var(--card);
+  background: var(--red);
+  border-color: var(--card);
+}
+#theme-list > li.theme-item.dragging {
+  opacity: 0.45;
+}
+#theme-list > li.theme-item.drag-merge-target {
+  outline-color: var(--red);
+}
+#theme-list > li.theme-item-add {
+  background: var(--card);
+  color: var(--red);
+  border: 2px dashed #7A5A45;
+  box-shadow: none;
+}
+#theme-list > li.theme-item-add:hover {
+  background: #E4DCC4;
+  border-color: #5C3220;
+  color: #5C3220;
+}
+
+/* ---------- Reading passage popups — secondary-button contrast fix ------ */
+/* #lookup-panel/#grammar-panel/#kanji-panel (passage.html) never migrated
+   off style.css's dark #221712 background. button.secondary now defaults
+   to color: var(--ink) on a transparent background — and var(--ink) is
+   that exact same #221712 — so "Save as grammar note" / "Add to vocab
+   deck" / "Add to theme" etc. rendered in a color identical to the panel
+   behind them: present, unhidden, and completely invisible. This restores
+   contrast without touching the panels' own dark background. */
+.lookup-panel .secondary,
+.grammar-panel .secondary,
+.kanji-panel .secondary {
+  color: var(--paper);
+  border-color: var(--paper);
+}
+.lookup-panel .secondary:hover,
+.grammar-panel .secondary:hover,
+.kanji-panel .secondary:hover {
+  background: rgba(236, 230, 211, 0.12);
+  color: var(--paper);
+  border-color: var(--paper);
+}
+
+/* ---------- Grammar note template (Grammer_New/grammar-note.html) ------ */
+/* Additive component classes for the redesigned grammar note page —
+   header meta chips, one-line summary, common-mistakes list, the
+   conjugation Formation table, and the Related Points row. Kept in this
+   shared stylesheet (not a page-local file) so any other page can reuse
+   them later. */
+.gn-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 16px; }
+.gn-one-line-summary {
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0 0 16px;
+  font-style: italic;
+}
+.gn-mistakes-list { margin: 0; padding-left: 20px; }
+.gn-mistakes-list li { margin-bottom: 6px; font-size: 13.5px; line-height: 1.5; }
+.gn-mistakes-list li:last-child { margin-bottom: 0; }
+.gn-formation-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 4px; }
+.gn-formation-table th,
+.gn-formation-table td {
+  border: 1px solid rgba(34, 23, 18, 0.25);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.gn-formation-table th {
+  background: var(--paper);
+  font-family: "Fahkwang", serif;
+  font-weight: 600;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.gn-related-points { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+/* ---------- Grammar add-note: structure-readiness checkbox ------------- */
+.card-structure-complete-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.card-structure-complete-label input:disabled + span { opacity: 0.55; }
+
+/* Quick notes (topbar Notes button + inline card on language home) */
+.quick-notes-panel { width: min(90vw, 360px); max-width: min(90vw, 360px); }
+.quick-notes-panel .hub-todo-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.quick-notes-close { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--ink); }
+.quick-notes-textarea {
+  width: 100%;
+  min-height: 260px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(34, 23, 18, 0.25);
+  border-radius: 10px;
+  background: var(--paper, #fbf8ef);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.quick-notes-card .hub-todo-header { margin-bottom: 10px; }
+.quick-notes-card .hub-todo-title { font-family: "Fahkwang", serif; font-size: 17px; font-weight: 500; }
+
+/* Linked items bar (js/section-links.js) */
+.section-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 24px; font-size: 13px; }
+.section-links-label { font-weight: 600; opacity: 0.75; }
+.section-link-chip { display: inline-flex; align-items: center; gap: 6px; }
+.section-link-chip a { color: inherit; }
+.section-link-remove,
+.section-link-add {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid rgba(34, 23, 18, 0.35);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.section-link-remove { border: none; padding: 0 2px; font-size: 15px; line-height: 1; }
+.section-link-picker { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.section-link-picker select { font-size: 12px; }
+
+/* Reading side panel: grammar/vocab note cards are multi-line, so no pill shape */
+.word-list > li.grammar-note-item,
+.word-list > li.vocab-note-item {
+  border-radius: 14px;
+  text-align: left;
+}
+.word-list > li.grammar-note-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 12px 16px;
+}
+.word-list > li.grammar-note-item p { margin: 0; }
+.word-list > li.grammar-note-item .delete-note-btn { align-self: flex-start; padding-left: 0; }
+
+/* Undo toast after saving vocab from a passage */
+.vocab-undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: var(--ink);
+  color: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  z-index: 200;
+  font-size: 14px;
+}
+.vocab-undo-toast[hidden] { display: none; }
+.vocab-undo-toast button {
+  background: transparent;
+  color: var(--card);
+  border: 1px solid var(--card);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Saved-from-passage highlights + tap-to-see-meaning bubble (saved-highlights.js) */
+mark.saved-unknown {
+  background: #F6E27A;
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  cursor: pointer;
+}
+.word-popup {
+  position: fixed;
+  z-index: 300;
+  max-width: min(80vw, 320px);
+  padding: 6px 12px;
+  background: var(--ink);
+  color: var(--card);
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+.word-popup[hidden] { display: none; }
+.corrected-word { cursor: pointer; }
+
+/* Writing: Helper Notebook scrolls on its own instead of with the page */
+@media (min-width: 801px) {
+  .writing-helper-panel {
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+  }
+  .helper-notebook-list {
+    position: relative;
+    max-height: 55vh;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+}

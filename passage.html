@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Reading</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fahkwang:wght@400;500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/idikai-refresh.css" />
+</head>
+<body>
+  <div id="app-topbar" class="app-topbar">
+    <button type="button" id="topbar-hamburger" class="topbar-hamburger" aria-label="Menu" aria-haspopup="true">
+      <span></span><span></span><span></span>
+    </button>
+    <span id="topbar-lang-label" class="topbar-lang-label"></span>
+    <div id="topbar-menu" class="topbar-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="changeLanguageHeading">Change language</div>
+      <button type="button" class="topbar-lang-option" data-lang="es" data-immersion-key="langNameEs">Spanish</button>
+      <button type="button" class="topbar-lang-option" data-lang="ja" data-immersion-key="langNameJa">Japanese</button>
+      <button type="button" class="topbar-lang-option" data-lang="fr" data-immersion-key="langNameFr">French</button>
+    </div>
+    <button type="button" id="topbar-notifications" class="topbar-notifications" aria-label="Notifications" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"></rect><path d="M3 6.5l9 6.5 9-6.5"></path></svg>
+    </button>
+    <!-- A quick-glance to-do list — just a small icon here next to
+         Notifications, opening the same panel that used to float over
+         the page as a big red button. -->
+    <button type="button" id="hub-todo-toggle" class="topbar-todo" aria-label="To-do list" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"></rect><path d="M8 12l3 3 5-6"></path></svg>
+      <span id="hub-todo-toggle-count" class="hub-todo-toggle-count" hidden></span>
+    </button>
+    <a href="welcome.html" id="topbar-home" class="topbar-home" aria-label="Language home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M5 10v10h14V10"></path></svg>
+    </a>
+    <div id="topbar-notifications-menu" class="topbar-menu topbar-notifications-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="notificationsHeading">Notifications</div>
+      <p class="topbar-notifications-empty" data-immersion-key="notificationsEmpty">Coming soon — once a teacher connection exists, updates will show up here.</p>
+    </div>
+    <div id="hub-todo-panel" class="hub-todo-panel" hidden>
+      <div id="hub-todo-header" class="hub-todo-header">
+        <span class="hub-todo-title" data-immersion-key="todoTitle">To-do list</span>
+        <button type="button" id="hub-todo-close" class="hub-todo-close" aria-label="Close">×</button>
+      </div>
+      <form id="hub-todo-add-form" class="hub-todo-add-form">
+        <input type="text" id="hub-todo-add-input" placeholder="Add a task…" autocomplete="off" data-immersion-key="todoAddPlaceholder" />
+        <select id="hub-todo-folder-select" class="hub-todo-folder-select" aria-label="Folder">
+          <option value="" data-immersion-key="todoNoFolder">No folder</option>
+        </select>
+        <button type="submit" data-immersion-key="todoAddButton">Add</button>
+      </form>
+      <div id="hub-todo-groups" class="hub-todo-groups"></div>
+      <label class="hub-todo-show-completed">
+        <input type="checkbox" id="hub-todo-show-completed" />
+        <span data-immersion-key="todoShowCompleted">Show completed</span>
+      </label>
+    </div>
+  </div>
+  <div id="app-tab-strip" class="app-tab-strip">
+    <div id="app-tab-strip-tabs" class="app-tab-strip-tabs"></div>
+    <div class="app-tab-strip-add">
+      <button type="button" id="app-tab-plus" class="tab-bar-plus-btn" title="Open another section in a new tab">+</button>
+      <div id="app-tab-picker-panel" class="app-tab-picker-panel" hidden>
+        <select id="app-tab-section-select">
+          <option value="" disabled selected data-immersion-key="tabPickerSectionPlaceholder">Which section?</option>
+          <option value="vocab" data-immersion-key="sectionVocab">Vocab Bank</option>
+          <option value="grammar" data-immersion-key="sectionGrammar">Grammar</option>
+          <option value="writing" data-immersion-key="sectionWriting">Writing</option>
+          <option value="speaking" data-immersion-key="sectionSpeaking">Speaking</option>
+          <option value="reading" data-immersion-key="sectionReading">Reading</option>
+          <option value="personal-hub" data-immersion-key="sectionPersonalHub">Main Hub</option>
+          <option value="listening" data-immersion-key="sectionListening">Listening</option>
+        </select>
+        <select id="app-tab-unit-select" hidden>
+          <option value="" disabled selected data-immersion-key="tabPickerUnitPlaceholder">Which one?</option>
+        </select>
+        <button type="button" id="app-tab-open-btn" class="secondary" hidden data-immersion-key="tabPickerOpen">Open</button>
+        <button type="button" id="app-tab-picker-cancel" class="secondary" data-immersion-key="tabPickerCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <header class="app-header" id="passage-header">
+    <a href="reading.html" class="back-link" id="passage-back-link" data-immersion-key="backToPassages">&larr; Back to Passages</a>
+    <h1 id="passage-title-heading">Passage</h1>
+    <span id="passage-lang-badge" class="pill-tag"></span>
+    <button type="button" id="toggle-vocab-notes-panel" class="secondary header-right-btn"><span data-immersion-key="vocabNotesPrefix">Vocab notes (</span><span id="vocab-note-count">0</span>)</button>
+    <button type="button" id="toggle-grammar-panel" class="secondary header-right-btn"><span data-immersion-key="grammarNotesPrefix">Grammar notes (</span><span id="grammar-note-count">0</span>)</button>
+  </header>
+  <div id="passage-links"></div>
+  <main id="reading-main">
+    <div id="split-container" class="split-container">
+      <aside id="grammar-side-panel" class="grammar-side-panel" hidden>
+        <div class="grammar-panel-header">
+          <h2 id="side-panel-title" data-immersion-key="grammarNotesHeading">Grammar notes</h2>
+          <button type="button" id="close-grammar-panel" class="secondary" aria-label="Close panel" data-immersion-key="btnClose">Close</button>
+        </div>
+
+        <div id="grammar-mode-content">
+          <form id="side-grammar-note-form" class="stacked-form" hidden>
+            <div id="side-note-sentence-display" class="grammar-note-sentence"></div>
+            <p id="side-note-translation-display" class="hint"></p>
+            <details id="side-note-hint-details">
+              <summary data-immersion-key="getAiHintSummary">Get an AI hint</summary>
+              <p id="side-note-structure-text" class="grammar-structure"></p>
+              <p id="side-note-explanation-text" class="hint"></p>
+            </details>
+            <label>
+              <span data-immersion-key="sentenceStructureNotesLabel">Sentence structure / notes</span>
+              <textarea id="side-note-notes" rows="3"></textarea>
+            </label>
+            <label>
+              <span data-immersion-key="tagsLabel">Tags</span>
+              <input type="text" id="side-note-tags" placeholder="e.g. reflexive idiom, pluperfect (comma-separated)" data-immersion-key="tagsPlaceholder" />
+            </label>
+            <label>
+              <span data-immersion-key="folderLabel">Folder</span>
+              <div class="select-with-button">
+                <select id="side-note-theme-select"></select>
+                <button type="button" id="side-note-new-folder-btn" class="secondary" data-immersion-key="newButtonPlus">+ New</button>
+              </div>
+            </label>
+            <div class="grammar-panel-actions">
+              <button type="submit" data-immersion-key="saveNoteButton">Save note</button>
+              <button type="button" id="cancel-side-note" class="secondary" data-immersion-key="btnCancel">Cancel</button>
+            </div>
+          </form>
+
+          <div id="side-grammar-notes-list-wrapper">
+            <h3 class="side-notes-heading" data-immersion-key="savedFromPassageHeading">Saved from this passage</h3>
+            <ul id="side-grammar-notes-list" class="word-list"></ul>
+          </div>
+        </div>
+
+        <div id="vocab-panel-content" hidden>
+          <div id="vocab-existing-display" hidden>
+            <p id="vocab-deck-notice-detail" class="deck-notice"></p>
+            <div class="grammar-note-sentence" id="vocab-existing-word"></div>
+            <p id="vocab-existing-furigana" class="hint"></p>
+            <p id="vocab-existing-meaning"></p>
+            <p class="hint" id="vocab-existing-theme"></p>
+            <div class="grammar-panel-actions">
+              <a id="open-full-vocab-link" href="#" class="secondary link-button" data-immersion-key="openInVocabBankLink">Open in Vocab Bank</a>
+            </div>
+          </div>
+
+          <form id="vocab-add-form" class="stacked-form" hidden>
+            <label>
+              <span id="vocab-add-word-label" data-immersion-key="wordKanjiLabel">Word / kanji</span>
+              <input type="text" id="vocab-add-word" required />
+            </label>
+            <label id="vocab-add-furigana-label">
+              <span data-immersion-key="furiganaLabel">Furigana</span>
+              <input type="text" id="vocab-add-furigana" />
+            </label>
+            <label>
+              <span data-immersion-key="meaningLabel">Meaning</span>
+              <input type="text" id="vocab-add-meaning" required />
+            </label>
+            <label>
+              <span data-immersion-key="infinitiveLabel">Infinitive / dictionary form (optional)</span>
+              <input type="text" id="vocab-add-infinitive" />
+            </label>
+            <div id="vocab-examples-box">
+              <button type="button" id="vocab-generate-examples-btn" class="secondary" data-immersion-key="generateExamplesButton">✨ Generate 3 examples</button>
+              <p id="vocab-examples-status" class="hint" hidden></p>
+              <ul id="vocab-examples-list" class="examples-list" hidden></ul>
+              <button type="button" id="vocab-examples-toggle-furigana" class="secondary" hidden data-immersion-key="seeHiraganaButton">See hiragana</button>
+            </div>
+            <label>
+              <span data-immersion-key="themeLabel">Theme</span>
+              <div class="select-with-button">
+                <select id="vocab-add-theme-select"></select>
+                <button type="button" id="vocab-add-new-theme-btn" class="secondary" data-immersion-key="newButtonPlus">+ New</button>
+              </div>
+            </label>
+            <div class="grammar-panel-actions">
+              <button type="submit" data-immersion-key="saveToVocabButton">Save to vocab</button>
+              <button type="button" id="cancel-vocab-add" class="secondary" data-immersion-key="btnCancel">Cancel</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="vocab-notes-content" hidden>
+          <div id="vocab-notes-list-wrapper">
+            <h3 class="side-notes-heading" data-immersion-key="savedFromPassageHeading">Saved from this passage</h3>
+            <p class="hint" data-immersion-key="vocabNotesLocateHint">Click a word to jump to where it appears in the text.</p>
+            <ul id="vocab-notes-list" class="word-list"></ul>
+          </div>
+        </div>
+      </aside>
+
+      <div id="split-divider" class="split-divider" hidden></div>
+
+      <section class="panel" id="passage-reader-panel">
+        <div class="passage-reader-toolbar">
+          <p class="hint" id="reader-hint" data-immersion-key="readerHint">Click any word to look it up. Drag to select a phrase or sentence to save a grammar note.</p>
+          <button type="button" id="toggle-furigana-review" class="secondary" hidden data-immersion-key="showFuriganaReviewButton">Show furigana for looked-up words</button>
+        </div>
+        <div id="passage-text-display" class="passage-text"></div>
+        <button type="button" id="delete-passage" class="secondary" data-immersion-key="deletePassageButton">Delete this passage</button>
+      </section>
+    </div>
+  </main>
+  <div id="lookup-panel" class="lookup-panel" hidden>
+    <strong id="lookup-word"></strong>
+    <span id="lookup-result"></span>
+    <span id="lookup-grammar" class="lookup-grammar"></span>
+    <button type="button" id="lookup-change-meaning" class="secondary" hidden data-immersion-key="changeMeaningButton">✎ Change meaning</button>
+    <button type="button" id="lookup-save-infinitive" class="secondary" hidden>Save infinitive</button>
+    <div id="lookup-examples-box">
+      <button type="button" id="lookup-generate-examples-btn" class="secondary" hidden data-immersion-key="generateExamplesButton">✨ Generate 3 examples</button>
+      <p id="lookup-examples-status" class="hint" hidden></p>
+      <ul id="lookup-examples-list" class="examples-list" hidden></ul>
+      <button type="button" id="lookup-examples-toggle-furigana" class="secondary" hidden data-immersion-key="seeHiraganaButton">See hiragana</button>
+    </div>
+    <select id="add-to-theme-select"></select>
+    <button type="button" id="add-to-theme-new-theme-btn" class="secondary" data-immersion-key="newThemeButtonPlus">+ New theme</button>
+    <button type="button" id="add-looked-up-word" hidden data-immersion-key="addToThemeButton">Add to theme</button>
+    <button type="button" id="save-word-as-grammar-note" class="secondary" hidden data-immersion-key="saveAsGrammarNoteButton">Save as grammar note</button>
+  </div>
+  <div id="kanji-panel" class="lookup-panel" hidden>
+    <strong id="kanji-char"></strong>
+    <span id="kanji-furigana" class="kanji-furigana"></span>
+    <span id="kanji-char-meaning" class="kanji-char-meaning" hidden></span>
+    <span id="kanji-meaning"></span>
+    <p id="kanji-dictionary-form" class="hint" hidden></p>
+    <span id="kanji-deck-notice" class="deck-notice" hidden></span>
+    <button type="button" id="reveal-kanji-meaning" class="secondary" hidden data-immersion-key="showMeaningButton">Show meaning</button>
+    <button type="button" id="add-kanji-to-vocab" class="secondary" hidden data-immersion-key="addToVocabDeckButton">Add to vocab deck</button>
+    <button type="button" id="show-kanji-in-vocab" class="secondary" hidden data-immersion-key="showInVocabSectionButton">Show in vocab section</button>
+  </div>
+  <div id="grammar-panel" class="grammar-panel" hidden>
+    <strong id="grammar-phrase"></strong>
+    <span id="grammar-furigana" class="kanji-furigana"></span>
+    <span id="grammar-translation"></span>
+    <p id="grammar-dictionary-form" class="hint" hidden></p>
+    <details id="grammar-hint-details">
+      <summary data-immersion-key="getAiHintSummary">Get an AI hint</summary>
+      <p id="grammar-structure-text" class="grammar-structure"></p>
+      <p id="grammar-hint-text"></p>
+    </details>
+    <div class="grammar-panel-actions">
+      <button type="button" id="save-grammar-note" class="secondary" hidden data-immersion-key="saveAsGrammarNoteButton">Save as grammar note</button>
+      <button type="button" id="save-grammar-phrase-as-vocab" class="secondary" hidden data-immersion-key="addToVocabDeckButton">Add to vocab deck</button>
+      <button type="button" id="grammar-change-meaning" class="secondary" hidden data-immersion-key="changeMeaningButton">✎ Change meaning</button>
+      <button type="button" id="grammar-save-infinitive" class="secondary" hidden>Save infinitive</button>
+    </div>
+  </div>
+  <script src="js/topbar.js"></script>
+  <script src="js/immersion.js"></script>
+  <script src="js/app-tabs.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/hub-tasks.js"></script>
+  <script src="js/translate.js"></script>
+  <script src="js/section-links.js"></script>
+  <script src="js/saved-highlights.js"></script>
+  <script src="js/reading-app.js"></script>
+</body>
+</html>

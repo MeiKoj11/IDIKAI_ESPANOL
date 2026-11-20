@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>New grammar note</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fahkwang:wght@400;500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/idikai-refresh.css" />
+</head>
+<body>
+  <div id="app-topbar" class="app-topbar">
+    <button type="button" id="topbar-hamburger" class="topbar-hamburger" aria-label="Menu" aria-haspopup="true">
+      <span></span><span></span><span></span>
+    </button>
+    <span id="topbar-lang-label" class="topbar-lang-label"></span>
+    <div id="topbar-menu" class="topbar-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="changeLanguageHeading">Change language</div>
+      <button type="button" class="topbar-lang-option" data-lang="es" data-immersion-key="langNameEs">Spanish</button>
+      <button type="button" class="topbar-lang-option" data-lang="ja" data-immersion-key="langNameJa">Japanese</button>
+      <button type="button" class="topbar-lang-option" data-lang="fr" data-immersion-key="langNameFr">French</button>
+    </div>
+    <button type="button" id="topbar-notifications" class="topbar-notifications" aria-label="Notifications" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"></rect><path d="M3 6.5l9 6.5 9-6.5"></path></svg>
+    </button>
+    <!-- A quick-glance to-do list — just a small icon here next to
+         Notifications, opening the same panel that used to float over
+         the page as a big red button. -->
+    <button type="button" id="hub-todo-toggle" class="topbar-todo" aria-label="To-do list" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"></rect><path d="M8 12l3 3 5-6"></path></svg>
+      <span id="hub-todo-toggle-count" class="hub-todo-toggle-count" hidden></span>
+    </button>
+    <a href="welcome.html" id="topbar-home" class="topbar-home" aria-label="Language home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M5 10v10h14V10"></path></svg>
+    </a>
+    <div id="topbar-notifications-menu" class="topbar-menu topbar-notifications-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="notificationsHeading">Notifications</div>
+      <p class="topbar-notifications-empty" data-immersion-key="notificationsEmpty">Coming soon — once a teacher connection exists, updates will show up here.</p>
+    </div>
+    <div id="hub-todo-panel" class="hub-todo-panel" hidden>
+      <div id="hub-todo-header" class="hub-todo-header">
+        <span class="hub-todo-title" data-immersion-key="todoTitle">To-do list</span>
+        <button type="button" id="hub-todo-close" class="hub-todo-close" aria-label="Close">×</button>
+      </div>
+      <form id="hub-todo-add-form" class="hub-todo-add-form">
+        <input type="text" id="hub-todo-add-input" placeholder="Add a task…" autocomplete="off" data-immersion-key="todoAddPlaceholder" />
+        <select id="hub-todo-folder-select" class="hub-todo-folder-select" aria-label="Folder">
+          <option value="" data-immersion-key="todoNoFolder">No folder</option>
+        </select>
+        <button type="submit" data-immersion-key="todoAddButton">Add</button>
+      </form>
+      <div id="hub-todo-groups" class="hub-todo-groups"></div>
+      <label class="hub-todo-show-completed">
+        <input type="checkbox" id="hub-todo-show-completed" />
+        <span data-immersion-key="todoShowCompleted">Show completed</span>
+      </label>
+    </div>
+  </div>
+  <div id="app-tab-strip" class="app-tab-strip">
+    <div id="app-tab-strip-tabs" class="app-tab-strip-tabs"></div>
+    <div class="app-tab-strip-add">
+      <button type="button" id="app-tab-plus" class="tab-bar-plus-btn" title="Open another section in a new tab">+</button>
+      <div id="app-tab-picker-panel" class="app-tab-picker-panel" hidden>
+        <select id="app-tab-section-select">
+          <option value="" disabled selected data-immersion-key="tabPickerSectionPlaceholder">Which section?</option>
+          <option value="vocab" data-immersion-key="sectionVocab">Vocab Bank</option>
+          <option value="grammar" data-immersion-key="sectionGrammar">Grammar</option>
+          <option value="writing" data-immersion-key="sectionWriting">Writing</option>
+          <option value="speaking" data-immersion-key="sectionSpeaking">Speaking</option>
+          <option value="reading" data-immersion-key="sectionReading">Reading</option>
+          <option value="personal-hub" data-immersion-key="sectionPersonalHub">Main Hub</option>
+          <option value="listening" data-immersion-key="sectionListening">Listening</option>
+        </select>
+        <select id="app-tab-unit-select" hidden>
+          <option value="" disabled selected data-immersion-key="tabPickerUnitPlaceholder">Which one?</option>
+        </select>
+        <button type="button" id="app-tab-open-btn" class="secondary" hidden data-immersion-key="tabPickerOpen">Open</button>
+        <button type="button" id="app-tab-picker-cancel" class="secondary" data-immersion-key="tabPickerCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <header class="app-header" id="grammar-note-header">
+    <a href="grammar.html" class="back-link" id="grammar-note-back-link" data-immersion-key="backToGrammar">&larr; Back to Grammar</a>
+    <h1 id="grammar-note-heading" data-immersion-key="newGrammarNoteHeading">New grammar note</h1>
+  </header>
+  <main>
+    <section class="panel">
+      <form id="grammar-note-form" class="stacked-form">
+        <p id="note-mode-toggle" class="note-mode-toggle"></p>
+
+        <!-- Legacy quick-capture: one sentence you noticed, mainly used
+             by the Reading/Writing "save to Grammar" handoffs and for
+             editing notes created that way. -->
+        <div id="legacy-note-fields" hidden>
+          <label>
+            <span id="note-sentence-label">Spanish sentence or phrase</span>
+            <textarea id="note-sentence" rows="2" placeholder="Paste or type a sentence or phrase..." data-immersion-key="pasteOrTypeSentencePlaceholder"></textarea>
+          </label>
+          <button type="button" id="fetch-translation-btn" class="secondary" data-immersion-key="lookUpTranslationButton">Look up translation</button>
+          <p id="note-translation-display" class="hint" hidden></p>
+
+          <details id="note-hint-details" hidden>
+            <summary data-immersion-key="getAiHintSummary">Get an AI hint</summary>
+            <p id="note-structure-text" class="grammar-structure"></p>
+            <p id="note-hint-text" class="hint"></p>
+          </details>
+
+          <!-- Read-only — only shown when editing a note that a Grammar
+               check originally created (its "why this was wrong"). Not
+               an editable field, since it wasn't written by hand. -->
+          <p id="note-explanation-display" class="hint grammar-note-explanation" hidden></p>
+
+          <label>
+            <span data-immersion-key="sentenceStructureNotesLabel">Sentence structure / notes</span>
+            <textarea id="note-notes" rows="4"></textarea>
+          </label>
+        </div>
+
+        <!-- Structure card: a named grammar pattern, explained in your
+             own words, with your own example sentences (auto-checked)
+             and optional related variants nested underneath. -->
+        <div id="structure-card-fields" hidden>
+          <label>
+            <span data-immersion-key="nameThisPatternLabel">Name this pattern</span>
+            <input type="text" id="card-header" placeholder="e.g. Intention" data-immersion-key="nameThisPatternPlaceholder" />
+          </label>
+          <label>
+            <span data-immersion-key="explainOwnWordsLabel">Explain it in your own words</span>
+            <textarea id="card-explanation" rows="3" placeholder="What is this pattern, and when do you use it?" data-immersion-key="explainOwnWordsPlaceholder"></textarea>
+          </label>
+          <label>
+            <span data-immersion-key="structureTemplateLabel">Structure template</span>
+            <input type="text" id="card-structure-template" placeholder="e.g. [Verb-たら], [Result]" data-immersion-key="structureTemplatePlaceholder" />
+          </label>
+
+          <button type="button" id="card-classify-btn" class="secondary" data-immersion-key="identifyPatternButton">Identify this pattern</button>
+          <div id="card-classify-status" class="card-classify-status" hidden></div>
+
+          <div class="card-block">
+            <h3 class="card-block-heading" data-immersion-key="examplesHeading">Examples</h3>
+            <div id="card-examples-list" class="card-examples-list"></div>
+            <button type="button" id="card-add-example-btn" class="secondary" data-immersion-key="addExampleButton">+ Add example</button>
+          </div>
+
+          <div class="card-block">
+            <h3 class="card-block-heading" data-immersion-key="relatedVariantsHeading">Related variants</h3>
+            <p class="hint" data-immersion-key="relatedVariantsHint">A related form of the same pattern (e.g. the same structure said about someone else) — nested here instead of its own folder entry.</p>
+            <div id="card-variants-list" class="card-variants-list"></div>
+            <button type="button" id="card-add-variant-btn" class="secondary" data-immersion-key="addRelatedVariantButton">+ Add related variant</button>
+          </div>
+
+          <div class="card-block" id="structure-complete-block">
+            <label class="card-structure-complete-label">
+              <input type="checkbox" id="card-structure-complete" disabled />
+              <span data-immersion-key="structureCompleteLabel">Complete structure — ready for AI detection</span>
+            </label>
+            <p class="hint" id="structure-complete-hint" data-immersion-key="structureCompleteHint">Fill in the name, a structure template, and at least one example to enable this.</p>
+          </div>
+        </div>
+
+        <label>
+          <span data-immersion-key="tagsLabel">Tags</span>
+          <input type="text" id="note-tags" placeholder="e.g. reflexive idiom, pluperfect (comma-separated)" data-immersion-key="tagsPlaceholder" />
+        </label>
+        <label>
+          <span data-immersion-key="folderLabel">Folder</span>
+          <div class="select-with-button">
+            <select id="note-theme-select"></select>
+            <button type="button" id="note-new-folder-btn" class="secondary" data-immersion-key="newButtonPlus">+ New</button>
+          </div>
+        </label>
+        <button type="submit" id="note-submit-btn" data-immersion-key="saveNoteButton">Save note</button>
+      </form>
+    </section>
+  </main>
+  <script src="js/topbar.js"></script>
+  <script src="js/immersion.js"></script>
+  <script src="js/app-tabs.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/hub-tasks.js"></script>
+  <script src="js/translate.js"></script>
+  <script src="js/grammar-concepts.js"></script>
+  <script src="js/grammar-app.js"></script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Language</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fahkwang:wght@400;500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/idikai-refresh.css" />
+</head>
+<body>
+  <div id="app-topbar" class="app-topbar">
+    <button type="button" id="topbar-hamburger" class="topbar-hamburger" aria-label="Menu" aria-haspopup="true">
+      <span></span><span></span><span></span>
+    </button>
+    <span id="topbar-lang-label" class="topbar-lang-label"></span>
+    <div id="topbar-menu" class="topbar-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="changeLanguageHeading">Change language</div>
+      <button type="button" class="topbar-lang-option" data-lang="es" data-immersion-key="langNameEs">Spanish</button>
+      <button type="button" class="topbar-lang-option" data-lang="ja" data-immersion-key="langNameJa">Japanese</button>
+      <button type="button" class="topbar-lang-option" data-lang="fr" data-immersion-key="langNameFr">French</button>
+      <a href="index.html" class="topbar-lang-option-link" data-immersion-key="allLanguagesLink">All languages</a>
+    </div>
+    <button type="button" id="topbar-notifications" class="topbar-notifications" aria-label="Notifications" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"></rect><path d="M3 6.5l9 6.5 9-6.5"></path></svg>
+    </button>
+    <!-- No to-do icon here — this page hosts the to-do list inline in
+         its side column instead (see #hub-todo-panel below), so a
+         second floating trigger would just be a redundant control. -->
+    <a href="welcome.html" id="topbar-home" class="topbar-home" aria-label="Language home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M5 10v10h14V10"></path></svg>
+    </a>
+    <div id="topbar-notifications-menu" class="topbar-menu topbar-notifications-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="notificationsHeading">Notifications</div>
+      <p class="topbar-notifications-empty" data-immersion-key="notificationsEmpty">Coming soon — once a teacher connection exists, updates will show up here.</p>
+    </div>
+  </div>
+  <div id="app-tab-strip" class="app-tab-strip">
+    <div id="app-tab-strip-tabs" class="app-tab-strip-tabs"></div>
+    <div class="app-tab-strip-add">
+      <button type="button" id="app-tab-plus" class="tab-bar-plus-btn" title="Open another section in a new tab">+</button>
+      <div id="app-tab-picker-panel" class="app-tab-picker-panel" hidden>
+        <select id="app-tab-section-select">
+          <option value="" disabled selected data-immersion-key="tabPickerSectionPlaceholder">Which section?</option>
+          <option value="vocab" data-immersion-key="sectionVocab">Vocab Bank</option>
+          <option value="grammar" data-immersion-key="sectionGrammar">Grammar</option>
+          <option value="writing" data-immersion-key="sectionWriting">Writing</option>
+          <option value="speaking" data-immersion-key="sectionSpeaking">Speaking</option>
+          <option value="reading" data-immersion-key="sectionReading">Reading</option>
+          <option value="personal-hub" data-immersion-key="sectionPersonalHub">Main Hub</option>
+          <option value="listening" data-immersion-key="sectionListening">Listening</option>
+        </select>
+        <select id="app-tab-unit-select" hidden>
+          <option value="" disabled selected data-immersion-key="tabPickerUnitPlaceholder">Which one?</option>
+        </select>
+        <button type="button" id="app-tab-open-btn" class="secondary" hidden data-immersion-key="tabPickerOpen">Open</button>
+        <button type="button" id="app-tab-picker-cancel" class="secondary" data-immersion-key="tabPickerCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <main class="lang-home-main">
+    <div class="pagehead">
+      <div class="row-head">
+        <div class="grow">
+          <div class="eyebrow" data-immersion-key="langHomeEyebrow">Language home</div>
+          <h1 class="page-title" data-immersion-key="langHomeTitle">Where would you like to work today?</h1>
+        </div>
+        <a href="welcome.html" class="btn" data-immersion-key="backToWelcome">Back to welcome</a>
+      </div>
+    </div>
+    <div class="cols">
+      <div class="col-main" id="lang-home-col-main"></div>
+      <div class="col-side">
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:9px">
+            <span class="dot-sm" style="background:#771011; border:none; width:9px; height:9px"></span>
+            <h3 style="font-size:17px" data-immersion-key="notificationsHeading">Teacher updates</h3>
+          </div>
+          <p class="card-text" style="color:rgba(34,23,18,0.75)" data-immersion-key="notificationsEmpty">Coming soon — once a teacher connection exists, updates will show up here.</p>
+        </div>
+        <div class="card">
+          <div id="hub-todo-panel" class="hub-todo-panel hub-todo-panel--inline">
+            <div id="hub-todo-header" class="hub-todo-header">
+              <span class="hub-todo-title" data-immersion-key="todoTitle">To-do list</span>
+            </div>
+            <form id="hub-todo-add-form" class="hub-todo-add-form">
+              <input type="text" id="hub-todo-add-input" placeholder="Add a task…" autocomplete="off" data-immersion-key="todoAddPlaceholder" />
+              <select id="hub-todo-folder-select" class="hub-todo-folder-select" aria-label="Folder">
+                <option value="" data-immersion-key="todoNoFolder">No folder</option>
+              </select>
+              <button type="submit" data-immersion-key="todoAddButton">Add</button>
+            </form>
+            <div id="hub-todo-groups" class="hub-todo-groups"></div>
+            <label class="hub-todo-show-completed">
+              <input type="checkbox" id="hub-todo-show-completed" />
+              <span data-immersion-key="todoShowCompleted">Show completed</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/topbar.js"></script>
+  <script src="js/immersion.js"></script>
+  <script src="js/app-tabs.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/hub-tasks.js"></script>
+  <script src="js/translate.js"></script>
+  <script src="js/language-home.js"></script>
+</body>
+</html>

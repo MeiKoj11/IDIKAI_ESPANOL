@@ -1,0 +1,2972 @@
+/*
+  server.js
+  ---------
+  Tiny local backend for the Vocab Bank dictionary lookup. Its only
+  job: hold the Claude API key server-side (never send it to the
+  browser) and turn a word/phrase into structured dictionary data —
+  a clean dictionary-form translation, part of speech, and (for
+  Spanish nouns) gender/article — instead of the guesswork you get
+  from a plain machine-translation API.
+
+  No npm packages required — everything here is a Node built-in.
+
+  Run it with:
+    1. Copy .env.example to .env and paste in your real API key.
+    2. node server.js   (or: npm start)
+    3. Leave that terminal window open while you use the Vocab Bank —
+       vocab.html calls this on localhost:3001 whenever you leave one
+       side of a word blank.
+*/
+
+const http = require("http");
+const https = require("https");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const db = require("./db.js");
+const r2 = require("./r2.js");
+
+// Hosting platforms (Render, Railway, etc.) assign their own port via
+// this env var and expect the app to listen on it — 3001 stays as the
+// local-dev fallback.
+const PORT = process.env.PORT || 3001;
+const MODEL = "claude-haiku-4-5-20251001";
+// Full-sentence grammar checking has to actually parse sentence
+// structure, agreement, and idiom across a whole paragraph — a much
+// harder reasoning task than a single-word dictionary lookup, and for
+// this one endpoint accuracy is the only thing that matters (cost and
+// latency explicitly don't) — so it gets the largest flagship model
+// available rather than the mid-tier one everything else uses.
+const GRAMMAR_CHECK_MODEL = "claude-opus-5";
+
+// Minimal .env loader — no "dotenv" package needed for something this small.
+function loadEnvFile() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) return;
+  fs.readFileSync(envPath, "utf8")
+    .split("\n")
+    .forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) return;
+      const key = trimmed.slice(0, eq).trim();
+      const value = trimmed.slice(eq + 1).trim();
+      if (!(key in process.env)) process.env[key] = value;
+    });
+}
+loadEnvFile();
+
+const API_KEY = process.env.ANTHROPIC_API_KEY;
+
+const LANGUAGE_NAMES = { en: "English", es: "Spanish", ja: "Japanese", fr: "French" };
+
+const SYSTEM_PROMPT = `You are a bilingual dictionary AND verb-conjugation lookup for a personal
+vocabulary-learning app. Given a single word or short phrase and a translation direction, respond
+with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{
+  "translation": string or null,
+  "partOfSpeech": "noun" | "verb" | "adjective" | "adverb" | "other",
+  "gender": "masculine" | "feminine" | null,
+  "article": string or null,
+  "plural": boolean,
+  "furigana": string or null,
+  "conjugationInfo": {
+    "infinitive": string,
+    "infinitiveEnglish": string,
+    "tense": string,
+    "person": string
+  } or null,
+  "verbClass": "godan" | "ichidan" | "irregular-suru" | "irregular-kuru" | null,
+  "verbType": "ar" | "er" | "ir" | "re" | "irregular" | null
+}
+
+Rules:
+- "furigana" is ONLY ever the hiragana reading of a JAPANESE word — never Spanish, never English.
+  Whichever side of this particular translation is Japanese (the "translation" if translating INTO
+  Japanese, or the original input word itself if translating FROM Japanese into English), fill in
+  its reading entirely in hiragana (convert any katakana in the reading to hiragana too). If no
+  Japanese is involved on either side (e.g. English<->Spanish), set "furigana" to null. If the
+  Japanese word is already all-hiragana/katakana with no kanji, still give its hiragana reading
+  (won't just repeat kanji, since there isn't any) rather than null.
+- If the input describes a SPECIFIC verb form — a particular tense/person, whether written in
+  English ("I would have eaten", "she ran", "we are leaving") or already conjugated in Spanish
+  ("comía", "recibí", "habría comido", "supiera"), French ("mangeait", "ont pris") or Japanese
+  ("食べた", "行きます") — "translation" must be the correctly conjugated
+  form in the OUTPUT language (not the infinitive), and "conjugationInfo" must be filled in with
+  the verb's infinitive, the infinitive's English meaning, a short human-readable tense name that
+  ALWAYS includes the mood when it isn't plain indicative (e.g. "preterite", "imperfect", "future",
+  "conditional", "conditional perfect", "present progressive", "present subjunctive", "imperfect
+  subjunctive", "present perfect subjunctive", "pluperfect subjunctive", "imperative (affirmative)",
+  "imperative (negative)"), and the grammatical person (e.g. "yo", "tú", "él/ella/usted",
+  "nosotros", "vosotros", "ellos/ellas/ustedes"). For example "supiera" -> infinitive "saber",
+  tense "imperfect subjunctive", person "yo" (or "él/ella/usted" — both share this form; pick "yo"
+  unless context says otherwise).
+- If the input is just a GENERIC reference to the verb itself — "to eat", "eat", or the bare
+  Spanish infinitive "comer" — "translation" is the infinitive and "conjugationInfo" is null.
+- For nouns translated INTO Spanish, "translation" is the bare noun, with no article included in
+  the string itself.
+- "gender" and "article" only apply to Spanish nouns (masculine/feminine, el/la/los/las as
+  commonly used for that word). Set both to null for anything else, including English output,
+  verbs, and Japanese.
+- For Spanish ADJECTIVES whose ending changes with gender (typically -o for masculine / -a for
+  feminine, e.g. cansado/cansada), if the input doesn't specify a gender (e.g. "I am tired", "tired"
+  — English rarely marks adjective gender), write "translation" using the "/a" shorthand so it
+  captures both forms, e.g. "estoy cansado/a" (keep any accompanying verb like "estoy" untouched,
+  only the adjective gets the "/a"). If the input DOES specify gender ("she is tired" -> feminine,
+  "he is tired" -> masculine), give the single correctly-gendered form instead ("cansada" /
+  "cansado"). Adjectives that don't change with gender (e.g. "feliz", "inteligente") are unaffected
+  — never add "/a" to those.
+- Match the grammatical number of the input exactly — do not silently convert a plural input into
+  a singular "dictionary form" translation, or vice versa. If the English input is plural (e.g.
+  "grapes"), "translation" must be the plural Spanish noun (e.g. "uvas", not "uva"), "plural" must
+  be true, and "article" must be the plural article ("las"/"los"), not the singular one. If the
+  English input is singular (e.g. "grape"), return the singular noun, "plural": false, and the
+  singular article ("la"/"el").
+- If you are not confident of a correct translation, set "translation" to null rather than guessing.
+- "verbClass" is ONLY ever filled in when "partOfSpeech" is "verb" AND the verb is JAPANESE (the
+  dictionary/infinitive form, on whichever side is Japanese) — set it to null for every other case
+  (Spanish verbs, non-verbs, no Japanese involved). This is a personal app feature that lets locally
+  written code conjugate the verb correctly without another API call later, so get it right:
+    - "irregular-suru": the verb is literally する ("to do"), or a suru-verb compound ending in する
+      (e.g. 勉強する "to study", 運転する "to drive") — the する part conjugates irregularly.
+    - "irregular-kuru": the verb is literally 来る ("to come") — also irregular.
+    - "ichidan" (a "ru-verb"): dictionary form ends in る, and the vowel immediately before that る
+      is い or え (e.g. 食べる taberu, 見る miru, 起きる okiru, 忘れる wasureru). Conjugates by simply
+      dropping る and adding a suffix.
+    - "godan" (a "u-verb"): every other verb, INCLUDING る-ending verbs whose preceding vowel is あ/う/お
+      (e.g. 帰る kaeru, 入る hairu, 走る hashiru, 知る shiru — these look like ichidan but conjugate as
+      godan, a well-known trap; get this distinction right rather than guessing from the spelling
+      pattern alone) and every verb ending in う/く/ぐ/す/つ/ぬ/ぶ/む. Conjugates by shifting the final
+      kana across its row (e.g. 飲む -> 飲ま/飲み/飲む/飲め/飲も).
+- "verbType" is ONLY ever filled in when "partOfSpeech" is "verb" AND the verb is SPANISH or FRENCH
+  (the dictionary/infinitive form, on whichever side is Spanish/French) — set it to null for every
+  other case (Japanese verbs, non-verbs, no Spanish/French involved). Same purpose as "verbClass"
+  above: lets locally written code conjugate the verb without another API call, so be conservative
+  rather than guessing wrong:
+    - Spanish: "ar" or "ir" only when the verb is FULLY REGULAR in every tense (no stem change, no
+      spelling change, no irregular stem, no irregular participle) — e.g. "hablar" -> "ar",
+      "vivir" -> "ir". Set to "irregular" for ANYTHING else, including stem-changers (pensar,
+      dormir), spelling-changers (buscar, llegar), and any verb with an irregular form anywhere in
+      its conjugation (ser, ir, tener, hacer...). (Spanish has no "-er"/"-re" values; a fully
+      regular -er verb like "comer" is unusual enough that if you're not certain it has zero
+      irregularities anywhere, mark it "irregular" instead.)
+    - French: "er", "ir", or "re" only when the verb is FULLY REGULAR for that group in every tense
+      (no stem/spelling change, no irregular participle, uses "avoir" as its compound-tense
+      auxiliary) — e.g. "parler" -> "er", "finir" -> "ir", "vendre" -> "re". Set to "irregular" for
+      anything else, including spelling-changers (manger, commencer, acheter, appeler), any verb
+      that takes "être" instead of "avoir" (aller, arriver, sortir...), and true irregulars (être,
+      avoir, faire, aller, pouvoir, vouloir, devoir...).
+  When genuinely unsure whether a verb is fully regular, prefer "irregular" — a false "irregular" is
+  harmless (the app just won't auto-conjugate it locally), but a false regular classification would
+  produce a wrong conjugated form.
+- Output nothing except the JSON object described above.`;
+
+// Claude sometimes wraps JSON in a ```json ... ``` code fence even when
+// told not to — strip that defensively rather than relying on the model
+// always following the "no markdown" instruction.
+function stripCodeFences(text) {
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  return fenceMatch ? fenceMatch[1] : trimmed;
+}
+
+// Strict JSON.parse first; if Claude slipped in a stray sentence before
+// or after the object despite instructions not to, fall back to pulling
+// out the first {...} block instead of failing the whole lookup over
+// one wayward line of prose.
+function extractJsonObject(text) {
+  const stripped = stripCodeFences(text);
+  try {
+    return JSON.parse(stripped);
+  } catch (e) {
+    const match = stripped.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (e2) {
+        // fall through to the original error below
+      }
+    }
+    const snippet = stripped.length > 300 ? `${stripped.slice(0, 300)}…` : stripped;
+    throw new Error(`Could not parse Claude's response as JSON: ${e.message}. Raw response: ${snippet}`);
+  }
+}
+
+// Generic "ask Claude for a JSON object back" helper — most endpoints
+// use this, just with different system prompts. `model` defaults to the
+// fast/cheap MODEL; pass GRAMMAR_CHECK_MODEL explicitly for the one
+// endpoint that needs stronger reasoning.
+function callClaudeJSON(systemPrompt, userMessage, maxTokens, model) {
+  return new Promise((resolve, reject) => {
+    if (!API_KEY) {
+      reject(new Error("ANTHROPIC_API_KEY is not set — copy .env.example to .env and add your key."));
+      return;
+    }
+
+    const payload = JSON.stringify({
+      model: model || MODEL,
+      max_tokens: maxTokens || 200,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    const req = https.request(
+      {
+        hostname: "api.anthropic.com",
+        path: "/v1/messages",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        // Collect raw Buffer chunks and decode ONCE at the end, rather
+        // than `body += chunk` (implicitly stringifying each chunk on
+        // its own) — a multi-byte UTF-8 character (any Japanese text,
+        // for example) can land split across two chunks on the wire,
+        // and decoding each chunk in isolation mangles that character
+        // into a replacement glyph (�) instead of waiting for the full
+        // byte sequence.
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if (res.statusCode !== 200) {
+            reject(new Error(`Claude API error ${res.statusCode}: ${body}`));
+            return;
+          }
+          try {
+            const data = JSON.parse(body);
+            // Check this BEFORE looking for a text block — models with
+            // adaptive thinking (on by default at "high" effort) bill
+            // thinking tokens against the same max_tokens budget as the
+            // real answer, with no separate allowance. On a request that
+            // makes Claude think hard, thinking alone can exhaust the
+            // whole budget before any text block is even started, which
+            // leaves content with ONLY an (empty-looking — thinking text
+            // is omitted by default, though the tokens were still spent)
+            // thinking block and stop_reason "max_tokens" — a real
+            // out-of-budget failure, not the generic "shape" error below.
+            if (data.stop_reason === "max_tokens") {
+              reject(
+                new Error(
+                  "Claude's response was cut off before it finished (hit the token limit for this request) — try again, or if this keeps happening with this entry, it may be too long for one grammar check."
+                )
+              );
+              return;
+            }
+            // Find the first actual TEXT block rather than assuming
+            // content[0] is one — some responses can lead with a
+            // non-text block (e.g. "thinking"), which would otherwise
+            // make this fail even though real text is present further
+            // along in the array.
+            const textBlock = Array.isArray(data.content) ? data.content.find((b) => b && b.type === "text" && b.text) : null;
+            if (!textBlock) {
+              const snippet = body.length > 600 ? `${body.slice(0, 600)}…` : body;
+              reject(new Error(`Unexpected response shape from Claude API. Raw response: ${snippet}`));
+              return;
+            }
+            resolve(extractJsonObject(textBlock.text));
+          } catch (e) {
+            reject(e instanceof Error ? e : new Error(String(e)));
+          }
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+// Shared retry-at-larger-budget wrapper for short structured-JSON calls on
+// GRAMMAR_CHECK_MODEL. See callClaudeForWritingGrammarCheck below for the
+// full explanation: this model's adaptive thinking (on by default) burns
+// an unpredictable chunk of max_tokens on reasoning before the real answer
+// even starts, so a fixed budget can't promise enough headroom for every
+// request — this retries once at a bigger budget specifically when the
+// first attempt was cut off, rather than just picking one bigger static
+// number and hoping it's always enough.
+async function callClaudeJSONWithRetry(systemPrompt, userMessage, baseTokens, retryTokens, model) {
+  try {
+    return await callClaudeJSON(systemPrompt, userMessage, baseTokens, model);
+  } catch (err) {
+    if (!(err instanceof Error) || !/cut off before it finished/.test(err.message)) throw err;
+    return callClaudeJSON(systemPrompt, userMessage, retryTokens, model);
+  }
+}
+
+function callClaude(word, fromLang, toLang) {
+  const userMessage = `Translate "${word}" from ${LANGUAGE_NAMES[fromLang] || fromLang} to ${LANGUAGE_NAMES[toLang] || toLang}.`;
+  return callClaudeJSON(SYSTEM_PROMPT, userMessage, 200);
+}
+
+// Used by the Japanese Reading bubble's click-any-kanji lookup. Japanese
+// has no spaces to tokenize on, so instead of trying to segment the
+// whole text into words (a much harder problem), each individual kanji
+// character is made clickable and this figures out — using the
+// surrounding sentence for context — what word or compound it's
+// actually part of, rather than just returning that one character in
+// isolation.
+const KANJI_LOOKUP_PROMPT = `You are a Japanese dictionary lookup for a learner reading real text.
+You'll be given either a single kanji character the learner clicked on, or a short run of kanji
+they selected together, plus the sentence it appeared in. Identify the word or compound that kanji
+(or selection) is actually part of in that context — it might be a standalone single-kanji word,
+a multi-kanji compound (possibly larger than what was selected/clicked, if it's only part of a
+bigger compound), or the kanji stem of a verb/adjective with okurigana. Respond with ONLY a JSON
+object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "word": string, "furigana": string, "meaning": string, "kanjiMeaning": string or null,
+  "dictionaryForm": string or null, "dictionaryFormEnglish": string or null }
+
+STAY PRECISE — this is the most important rule. "word" must be either exactly the input
+character(s), or the smallest compound/inflected form that input is genuinely, grammatically part
+of at that exact position in the sentence (e.g. a single kanji that's the first half of a two-kanji
+compound sitting right next to it, or a verb stem plus its own okurigana). NEVER expand "word" to
+cover a larger phrase, a following particle/verb that is a separate word, or the rest of the
+sentence — if the input is already a complete word or compound on its own, "word" is exactly that
+input, nothing more and nothing less. When genuinely unsure whether the input is part of a bigger
+compound, prefer the smaller, more literal reading over a larger guess.
+
+"furigana" is that word's reading written entirely in hiragana. NEVER leave this blank or omit it
+— every response has a hiragana reading for "word", with no exceptions, including when
+"kanjiMeaning" is also filled in (in that case "furigana" is still the reading of the FULL word/
+compound named in "word", not just the one clicked character).
+
+"meaning" is a concise, natural English meaning of that word or compound — not just the isolated
+kanji's meaning if it's actually part of a compound with a different combined meaning.
+
+"kanjiMeaning" is ONLY filled in when exactly ONE kanji character was given as input (not a
+multi-character selection) AND that character is part of a larger word/compound (i.e. "word" is
+longer than the single input character) — in that case, give that one character's own standalone
+dictionary meaning as a character (e.g. for 授 clicked inside 授業, "kanjiMeaning" is something like
+"to grant, instruct, bestow" — its own meaning, which is NOT the same as "meaning", the compound's
+combined meaning "class, lesson"). A compound's overall meaning is very often unrelated to or
+different from any one of its individual kanji's meanings — don't just repeat "meaning" here. If
+the input was already a multi-character selection, or if "word" IS just that one single character
+(a standalone single-kanji word with no larger compound), set "kanjiMeaning" to null.
+
+"dictionaryForm" and "dictionaryFormEnglish" are filled in whenever "word" is a verb or i-adjective
+given in a conjugated/inflected form (has okurigana beyond the plain dictionary ending, e.g. past,
+negative, te-form, potential, conditional, etc). "dictionaryForm" is that word's plain dictionary/
+infinitive form (e.g. "扱った" -> "扱う", "食べられない" -> "食べる"), and "dictionaryFormEnglish" is a
+short English gloss of that base form (e.g. "to handle", "to eat"). Never skip this for a verb —
+if "word" is already in its dictionary form, or isn't a verb/adjective, set both to null.
+
+Always fill in "word" with your best answer — never leave it empty, even if you're not fully
+certain; give your best reading of the character(s) in that context instead.`;
+
+// A single kanji lookup is cheap and the interaction it powers (click a
+// character, get an answer) has no other fallback path the way the
+// dictionary lookup does (MyMemory) — so it's worth one automatic retry
+// if the first attempt errors out or comes back with an empty "word"
+// (Claude occasionally under-commits on a lookup it's actually fine at)
+// rather than surfacing a dead end on the first hiccup.
+async function callClaudeForKanjiLookup(kanji, context) {
+  const userMessage = `Clicked kanji: "${kanji}". Sentence: "${context}"`;
+  const MAX_ATTEMPTS = 2;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const result = await callClaudeJSON(KANJI_LOOKUP_PROMPT, userMessage, 200);
+      if (result && result.word) return result;
+      lastErr = new Error("Claude returned an empty lookup result for this kanji.");
+    } catch (err) {
+      lastErr = err;
+    }
+    if (attempt < MAX_ATTEMPTS) await sleep(300);
+  }
+  throw lastErr;
+}
+
+const CONJUGATION_CHECK_PROMPT = `You are checking a single answer in a Spanish verb-conjugation quiz.
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "correct": boolean, "feedback": string }
+
+"feedback" is one short sentence: if correct, briefly affirm it; if incorrect, name the specific
+issue (wrong ending, wrong person, wrong stem change, missing/wrong accent, wrong auxiliary, etc).
+Accept minor accent omissions as a typo rather than an error unless accent is the entire point of
+the question. Accept well-known valid regional variants (e.g. vosotros vs. ustedes forms, voseo)
+as correct if they are genuinely valid for that tense/person — don't fail an answer just for using
+a different but equally correct regional form. Be strict about actual conjugation mistakes.`;
+
+function callClaudeForConjugationCheck(infinitive, tense, person, expected, userAnswer) {
+  const userMessage =
+    `Verb: ${infinitive}. Tense: ${tense}. Person: ${person}. ` +
+    `Expected canonical answer: "${expected}". Student wrote: "${userAnswer}". ` +
+    `Is the student's answer an acceptable correct conjugation?`;
+  return callClaudeJSON(CONJUGATION_CHECK_PROMPT, userMessage, 150);
+}
+
+// Used by the Reading bubble's "select a phrase" flow and the Grammar
+// bubble's manual note form. Deliberately kept to a plain translation +
+// a short explanation, not a full structured breakdown — the note-taking
+// UI treats this as an optional, collapsed "hint," not something that
+// gets pasted into the saved note automatically. The learner writes the
+// pattern/notes themselves.
+const GRAMMAR_EXPLAIN_PROMPT = `You are a language tutor helping an English-speaking learner
+understand a phrase or sentence they selected while reading (Spanish, Japanese, or French — detect
+which from the text itself). Respond with ONLY a JSON object (no markdown, no code fences, no
+explanation) with exactly this shape:
+
+{ "translation": string, "furigana": string or null, "dictionaryForm": string or null,
+  "dictionaryFormEnglish": string or null, "structure": string, "explanation": string }
+
+"translation" is a natural, idiomatic English translation of EXACTLY the given phrase — the
+substring the learner actually selected, no more and no less. If a surrounding sentence is
+provided for context, use it only to translate the phrase correctly (resolve ambiguity, pick the
+right sense of a word, etc) — never let "translation" grow to cover more of that surrounding
+sentence than what was actually selected.
+
+"furigana" is ONLY ever the hiragana reading of the phrase, and ONLY when the phrase is Japanese —
+convert any katakana in the reading to hiragana too, and give the reading for the WHOLE phrase (not
+just one word in it). Set to null for Spanish or French phrases, or if the phrase has no kanji and
+is already all-hiragana/katakana, still give its hiragana reading rather than null.
+
+"dictionaryForm" and "dictionaryFormEnglish" are filled in whenever the phrase is built around ONE
+main verb (or other inflectable word) in a conjugated/inflected form — a single word, OR a short verb
+phrase where that verb comes with object/reflexive pronouns, auxiliaries or negation (e.g. Spanish
+"nos cobran" -> "cobrar", "se lo dije" -> "decir", "he comido" -> "comer", French "ne mange pas" ->
+"manger", "s'est levée" -> "se lever", Japanese "扱った" -> "扱う"). "dictionaryForm" is that main
+verb's dictionary/infinitive/base form written normally (e.g. Spanish "quería" -> "querer", French
+"mangeait" -> "manger", Japanese "食べられない" -> "食べる"), and "dictionaryFormEnglish" is a short
+English gloss of that base form (e.g. "to charge", "to eat", "to handle"). If the phrase is a longer
+clause/sentence, use its main conjugated verb. Set both to null only when there is no conjugated/
+inflected verb at all, or the only verb is already in its base form.
+
+"structure" is a SHORT formulaic label naming the main grammatical construction. For Spanish, style
+it like "como si + pluperfect subjunctive" or "ir a + infinitive" or "se + indirect object + verb
+(unplanned occurrences)" — a trigger/connector word or fixed element plus the grammatical term for
+what follows. For Japanese, style it like "〜たら + past tense (conditional)" or "〜ている (progressive/
+resultative)" or "〜ば〜ほど (the more..., the more...)" — the grammar pattern itself plus a short
+gloss of what it does. Not a full sentence either way. If multiple constructions are present, name
+the most notable one only. Keep it under 8 words.
+
+"explanation" is 2-4 short sentences, in plain teaching language (not linguistics jargon), covering
+whatever is actually notable — which tense/mood/form is used and why, any fixed idiomatic
+expressions and what they really mean, particles and what they're doing (Japanese), reflexive
+constructions, unusual word order, sequence-of-tenses logic, politeness/register level (Japanese).
+If a surrounding sentence is provided for context, use it to judge form correctly, but only explain
+the phrase itself, not the whole sentence. If nothing is particularly notable, keep the explanation
+brief rather than padding it out.`;
+
+function callClaudeForGrammarExplain(phrase, context) {
+  const userMessage = context && context.trim() && context.trim() !== phrase.trim()
+    ? `Phrase: "${phrase}"\nFull sentence for context: "${context}"`
+    : `Phrase: "${phrase}"`;
+  return callClaudeJSON(GRAMMAR_EXPLAIN_PROMPT, userMessage, 300);
+}
+
+// Powers the "Generate 3 examples" box on the vocab-add panel (Reading
+// bubble) — the whole point is to show the word being saved used in a
+// few natural sentences, in EXACTLY the form the learner is saving
+// (whatever conjugation/inflection that is), not some other tense —
+// generating 3 sentences that all quietly switched to the infinitive
+// would defeat the purpose.
+const GENERATE_EXAMPLES_PROMPT = `You are a language tutor writing short example sentences for a
+vocabulary flashcard. You'll be given a word or short phrase, its language, and its English meaning.
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this
+shape:
+
+{ "examples": [
+    { "text": string, "furigana": string or null, "translation": string },
+    { "text": string, "furigana": string or null, "translation": string },
+    { "text": string, "furigana": string or null, "translation": string }
+] }
+
+Write exactly 3 short, natural example sentences IN THE TARGET LANGUAGE, each one actually using the
+word/phrase somewhere in it. Use the word EXACTLY as given — the same form, tense, and conjugation —
+do not change it to the infinitive or to a different tense/person in any of the three sentences, even
+if that reads a little unusual as a standalone example. Keep each sentence short (roughly 4-10 words)
+and natural, suitable for a beginner/intermediate learner, and vary the context across the three so
+they aren't just minor rewordings of each other. "translation" is a natural English translation of
+that exact sentence. For Japanese, write the sentence normally (kanji where natural) in "text" — do
+NOT include furigana in "text" itself — and separately give the WHOLE sentence's reading, entirely in
+hiragana (convert any katakana too), as "furigana". For Spanish or French, set "furigana" to null.`;
+
+function callClaudeForExampleSentences(word, language, meaning) {
+  const userMessage = `Word/phrase: "${word}". Language: ${LANGUAGE_NAMES[language] || language}. English meaning: "${meaning || ""}".`;
+  return callClaudeJSON(GENERATE_EXAMPLES_PROMPT, userMessage, 700);
+}
+
+// Used by the Grammar bubble's own "structure card" notes — a learner
+// writes their OWN example sentence(s) for a grammar pattern they're
+// naming and explaining themselves (e.g. a card titled "Intention" for
+// 〜てほしい), and each example gets a light, fast correctness check as
+// they type it. This is deliberately narrower than the Writing bubble's
+// full-entry grammar check: it's one short sentence at a time, checked
+// only against "is this grammatically valid," not against the rest of a
+// paragraph — and it's told what pattern the learner is trying to
+// demonstrate so it can flag an example that's grammatical but doesn't
+// actually show the pattern, not just flag typos.
+const CHECK_EXAMPLE_SENTENCE_PROMPT = `You are a careful, encouraging language tutor checking ONE
+example sentence a learner wrote for their own grammar notes (Spanish or Japanese — you'll be told
+which). They're building a note about a specific grammar pattern and wrote this sentence to
+illustrate it. Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with
+exactly this shape:
+
+{ "isCorrect": boolean, "corrected": string, "note": string }
+
+Rules:
+- "corrected" is the sentence with any real grammar errors fixed (wrong conjugation, agreement,
+  wrong/missing particles, wrong tense/aspect, word order, misspellings). If the sentence is already
+  correct, "corrected" must be identical to the input.
+- Judge ONLY grammatical correctness of the sentence itself — do not rewrite for style, do not swap
+  in different vocabulary, do not "improve" a sentence that's already valid just because you'd have
+  phrased it differently.
+- If the learner told you what pattern/structure the sentence is meant to demonstrate, and the
+  sentence is grammatically fine but doesn't actually use or show that pattern, still set
+  "isCorrect": true (it's not a grammar error) but use "note" to gently flag the mismatch instead —
+  e.g. "This is correct, but doesn't use 〜てほしい — did you mean to include it?"
+- "isCorrect" is false only for an actual grammar mistake (not a style choice, not a mismatch with
+  the intended pattern — see above).
+- "note" is ONE short sentence in plain teaching language (no linguistics jargon) explaining what was
+  wrong, when isCorrect is false, or a brief pattern-mismatch note as described above. Leave it as an
+  empty string "" if the sentence is correct and does illustrate the pattern with nothing worth
+  flagging.
+- Judge Spanish or Japanese as told by the language given — never mix the two.`;
+
+function callClaudeForExampleCheck(text, language, patternContext) {
+  const userMessage = patternContext && patternContext.trim()
+    ? `Language: ${LANGUAGE_NAMES[language] || language}.\nPattern this sentence is meant to demonstrate: ${patternContext.trim()}\n\nExample sentence: ${text}`
+    : `Language: ${LANGUAGE_NAMES[language] || language}.\n\nExample sentence: ${text}`;
+  return callClaudeJSON(CHECK_EXAMPLE_SENTENCE_PROMPT, userMessage, 500);
+}
+
+// Powers the "sentence mode" Conjugation Test (as opposed to the quick,
+// fully-local single-verb-form test) — generates ONE natural full
+// sentence per question, in both English and the target language, that
+// uses the requested verb correctly conjugated for a specific tense/
+// person. Deliberately asked to weave in a little extra incidental
+// vocabulary (a noun/adjective/adverb beyond basic function words) so
+// there's usually something worth clicking to look up, per the "she can
+// highlight 'key' and the Spanish comes up" request — but kept short and
+// natural rather than stuffed with rare words.
+const GENERATE_CONJUGATION_SENTENCE_PROMPT = `You write natural, level-appropriate practice
+sentences for a language-learning app's conjugation drill (Spanish or French — you'll be told which).
+Given a verb (infinitive + English gloss), a specific tense, and a specific grammatical person, write
+ONE natural sentence — declarative, a question, or negative, vary it across requests — that uses that
+verb correctly conjugated for that exact tense/person, then give the correct, natural translation of
+that exact sentence in the other language. Respond with ONLY a JSON object (no markdown, no code
+fences, no explanation) with exactly this shape:
+
+{ "englishSentence": string, "targetSentence": string, "verbFormEnglish": string, "verbFormTarget": string }
+
+Rules:
+- "englishSentence" and "targetSentence" must be faithful translations of each other, both naturally
+  phrased (not stiff word-for-word translation).
+- Accuracy matters enormously — this is what a real learner will study as correct, so it must actually
+  be correct. Before answering, double-check every word that isn't the target verb, especially small
+  words that are easy to mistranslate literally: prepositions ("from" is "desde", not "hasta", which
+  means "until/as far as"; "for" can be "para" or "por" depending on meaning; etc.), gender/number
+  agreement on every article and adjective, and any idiom that doesn't translate word-for-word. A
+  native speaker of the target language must find the sentence completely natural and correct with no
+  hesitation.
+- "verbFormEnglish" is the exact conjugated verb phrase as it appears in "englishSentence" (e.g.
+  "would have given"). "verbFormTarget" is the exact conjugated verb form as it appears in
+  "targetSentence" (e.g. "habría dado").
+- The sentence must clearly and unambiguously use the requested tense/person — don't hedge into a
+  different one.
+- Keep the sentence short (roughly 5-12 words) and naturally include 1-2 pieces of vocabulary beyond
+  basic function words (a concrete noun, adjective, or adverb) so there's something a learner might
+  not already know — but keep it natural, not contrived or a vocabulary showcase.
+- Avoid idioms or phrasing that doesn't translate directly between the two languages.
+- Never reuse a sentence you've already been asked to avoid (a list may be given).
+- Output nothing except the JSON object.`;
+
+// Sentence-mode content becomes the learner's study material, so it's
+// worth the extra cost/latency of the stronger model here rather than
+// the fast/cheap MODEL used for routine single-word lookups — a wrong
+// preposition or agreement slip in a generated "reference" sentence
+// teaches the mistake as if it were correct.
+function callClaudeForGenerateConjugationSentence(language, infinitive, english, tenseLabel, personLabel, avoidSentences) {
+  const avoidLines = (avoidSentences || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoidSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const userMessage = `Language: ${LANGUAGE_NAMES[language] || language}.\nVerb: "${infinitive}" (${english}).\nTense: ${tenseLabel}.\nPerson: ${personLabel}.${avoidLines}`;
+  return callClaudeJSONWithRetry(GENERATE_CONJUGATION_SENTENCE_PROMPT, userMessage, 2000, 4000, GRAMMAR_CHECK_MODEL);
+}
+
+// Batch version of the above — powers the sentence test's "load a whole
+// test up front" mode (20 questions generated in ONE request instead of
+// one request per question), so there's a single longer wait at the
+// start rather than a short wait before every question, AND meaningfully
+// cheaper: the (fairly long) system prompt and Opus's per-request
+// thinking overhead are only paid once for the whole batch instead of
+// once per question. Same prompt content as the single version, just
+// restated to take/return a list.
+const GENERATE_CONJUGATION_SENTENCES_BATCH_PROMPT = `You write natural, level-appropriate practice
+sentences for a language-learning app's conjugation drill (Spanish or French — you'll be told which).
+You'll be given a numbered list of items, each specifying a verb (infinitive + English gloss), a
+specific tense, and a specific grammatical person. For EACH item, write ONE natural sentence —
+declarative, a question, or negative, vary it across the list — that uses that verb correctly
+conjugated for that exact tense/person, then give the correct, natural translation of that exact
+sentence in the other language. Respond with ONLY a JSON object (no markdown, no code fences, no
+explanation) with exactly this shape:
+
+{ "sentences": [ { "englishSentence": string, "targetSentence": string, "verbFormEnglish": string, "verbFormTarget": string }, ... ] }
+
+Rules:
+- Return exactly one output object per input item, IN THE SAME ORDER as the input list — the Nth
+  output object must answer the Nth input item.
+- "englishSentence" and "targetSentence" must be faithful translations of each other, both naturally
+  phrased (not stiff word-for-word translation).
+- Accuracy matters enormously — this is what a real learner will study as correct, so it must actually
+  be correct. Before answering, double-check every word that isn't the target verb, especially small
+  words that are easy to mistranslate literally: prepositions ("from" is "desde", not "hasta", which
+  means "until/as far as"; "for" can be "para" or "por" depending on meaning; etc.), gender/number
+  agreement on every article and adjective, and any idiom that doesn't translate word-for-word. A
+  native speaker of the target language must find each sentence completely natural and correct with
+  no hesitation.
+- "verbFormEnglish" is the exact conjugated verb phrase as it appears in "englishSentence" (e.g.
+  "would have given"). "verbFormTarget" is the exact conjugated verb form as it appears in
+  "targetSentence" (e.g. "habría dado").
+- Each sentence must clearly and unambiguously use its requested tense/person — don't hedge into a
+  different one.
+- Keep each sentence short (roughly 5-12 words) and naturally include 1-2 pieces of vocabulary beyond
+  basic function words (a concrete noun, adjective, or adverb) so there's something a learner might
+  not already know — but keep it natural, not contrived or a vocabulary showcase.
+- Avoid idioms or phrasing that doesn't translate directly between the two languages.
+- Vary sentence structure, subject matter, and phrasing across the list — no two sentences in this
+  batch should feel like copies of each other with just the verb swapped, even when several items
+  share the same verb/tense/person.
+- Never reuse a sentence you've already been asked to avoid (a list may be given).
+- Output nothing except the JSON object.`;
+
+function callClaudeForGenerateConjugationSentencesBatch(language, items, avoidSentences) {
+  const avoidLines = (avoidSentences || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoidSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const itemLines = items
+    .map((item, i) => `${i + 1}. Verb: "${item.infinitive}" (${item.english || ""}). Tense: ${item.tenseLabel}. Person: ${item.personLabel}.`)
+    .join("\n");
+  const userMessage = `Language: ${LANGUAGE_NAMES[language] || language}.\n\nItems:\n${itemLines}${avoidLines}`;
+  return callClaudeJSONWithRetry(GENERATE_CONJUGATION_SENTENCES_BATCH_PROMPT, userMessage, 12000, 24000, GRAMMAR_CHECK_MODEL);
+}
+
+// ---------------------------------------------------------------------
+// "Self-marking" sentence test mode — a deliberately less-AI-assisted
+// redesign of the sentence test: the AI no longer grades the learner's
+// answer at all (that judgment call is now the learner's own, by
+// design — see the self-marking review step on the frontend). Instead,
+// generation splits into two independent passes so the whole test can
+// appear almost immediately while accuracy is still fully preserved
+// where it actually matters:
+//   1. A FAST/cheap model writes just the English prompt sentences —
+//      writing a sentence in its own native language carries very
+//      little accuracy risk (nothing is being translated yet), so
+//      speed can be prioritized here without the "hasta vs desde"
+//      class of failure.
+//   2. The STRONG model (used everywhere else in this file for
+//      anything a learner will study as correct) then translates
+//      those exact English sentences into Spanish — this is the part
+//      where a wrong preposition or agreement slip actually costs
+//      something, so it keeps the careful model and the same accuracy
+//      checklist as the rest of sentence-mode. This pass runs in the
+//      background while the learner is reading/typing, so by the time
+//      they hit Submit it's very likely already finished.
+// ---------------------------------------------------------------------
+
+// Parameterized by language name (was Spanish-only) so the self-marking
+// sentence-test flow works for any target language that uses this
+// English-draft/foreign-language-translate split — currently Spanish,
+// French, and Japanese; the prompt text itself is otherwise unchanged.
+// Worded generically enough to cover BOTH item shapes an item can come
+// in (see formatPracticeItemVerbLine below): a tense/person pair
+// (Spanish/French) or one of Japanese's four special verb forms
+// (potential/passive/causative/causative-passive — see ja-conjugator.js),
+// since a single learner-facing English sentence-writing prompt doesn't
+// need to know which shape it's dealing with.
+function buildGenerateEnglishPracticeSentencesBatchPrompt(languageName) {
+  return `You write natural, level-appropriate
+English practice sentences for a ${languageName} learner's conjugation drill. You'll be given a numbered list
+of items, each specifying a verb (English gloss) and the exact grammatical form it must take when
+translated into ${languageName} — either a tense/person combination, or (for Japanese) one of the potential/
+passive/causative/causative-passive forms. For EACH item, write ONE natural ENGLISH sentence —
+declarative, a question, or negative, vary it across the list — that would clearly call for that exact
+form if translated into ${languageName} (e.g. for a Spanish/French preterite + "nosotros"/"nous", describe
+something completed in the past by that subject; for a Japanese causative or passive form, write a
+sentence that clearly names BOTH people involved — who's making/letting/affecting whom — so there's no
+ambiguity about which party is the grammatical subject once translated).
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "sentences": [ { "englishSentence": string }, ... ] }
+
+Rules:
+- Return exactly one output object per input item, IN THE SAME ORDER as the input list.
+- CRITICAL: the sentence must actually use the EXACT verb given for that item — its literal meaning,
+  not a related, opposite, or more-convenient-sounding substitute (e.g. if the verb is "to forget",
+  the sentence must be about forgetting, not "memorize", "remember", or "study" just because those
+  read more naturally in the scenario you picked). If the requested verb+form combination makes for an
+  unusual-sounding sentence, write an unusual-but-correct sentence rather than quietly swapping in a
+  different verb — accuracy to the given verb matters more than how natural the scenario feels.
+- Each sentence must be natural, grammatically correct English that clearly calls for the specified
+  form when translated — don't hedge into an ambiguous tense or voice.
+- Keep each sentence short (roughly 5-12 words) and naturally include 1-2 pieces of vocabulary beyond
+  basic function words so there's something worth practicing, but keep it natural, not contrived.
+- Vary sentence structure, subject matter, and phrasing across the list — no two sentences in this
+  batch should feel like copies of each other with just the verb swapped.
+- This pass only writes English — do not include any ${languageName} in your response.
+- Never reuse a sentence you've already been asked to avoid (a list may be given).
+- Output nothing except the JSON object.`;
+}
+
+// One input item is EITHER the Spanish/French shape
+// ({ infinitive, english, tenseLabel, personLabel }) OR the Japanese
+// shape ({ kanji, reading, meaning, formLabel }) — dispatches on which
+// fields are present rather than needing a separate "shape" flag, since
+// the two shapes don't overlap on any field name.
+function formatPracticeItemVerbLine(item) {
+  if (item.kanji) {
+    return `Verb: "${item.kanji}"${item.reading ? ` (${item.reading})` : ""} — "${item.meaning || ""}". Form: ${item.formLabel}.`;
+  }
+  return `Verb: "${item.infinitive}" (${item.english || ""}). Tense: ${item.tenseLabel}. Person: ${item.personLabel}.`;
+}
+
+function callClaudeForGenerateEnglishPracticeSentencesBatch(language, items, avoidSentences) {
+  const languageName = LANGUAGE_NAMES[language] || language;
+  const avoidLines = (avoidSentences || []).length
+    ? `\n\nAvoid reusing any of these previous sentences:\n${avoidSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const itemLines = items.map((item, i) => `${i + 1}. ${formatPracticeItemVerbLine(item)}`).join("\n");
+  const userMessage = `Items:\n${itemLines}${avoidLines}`;
+  // Deliberately the fast/cheap MODEL, not GRAMMAR_CHECK_MODEL — see the
+  // block comment above for why this specific pass doesn't need it.
+  return callClaudeJSON(buildGenerateEnglishPracticeSentencesBatchPrompt(languageName), userMessage, 3000, MODEL);
+}
+
+function buildTranslatePracticeSentencesBatchPrompt(languageName) {
+  return `You translate English practice sentences into
+${languageName} for a language learner's conjugation drill, with complete accuracy — this is the answer key
+the learner will use to grade their own attempt against, so it must be correct. You'll be given a
+numbered list of items, each with an English sentence plus the specific verb and the exact grammatical
+form the translation must use — either a tense/person combination, or (for Japanese) one of the
+potential/passive/causative/causative-passive forms. For EACH item, translate the English sentence into
+ONE natural ${languageName} sentence using that exact verb correctly conjugated for that exact form.
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "translations": [ { "targetSentence": string, "verbFormTarget": string }, ... ] }
+
+Rules:
+- Return exactly one output object per input item, IN THE SAME ORDER as the input list.
+- "targetSentence" must be a faithful, natural translation of the given English sentence (not stiff
+  word-for-word) — keep the same meaning, just written the way a native ${languageName} speaker actually would.
+- Accuracy matters enormously — this is what a real learner will grade their own answer against, so it
+  must actually be correct. Double-check every word that isn't the target verb, especially small words
+  that are easy to mistranslate literally: prepositions (e.g. Spanish "from" is "desde", not "hasta",
+  which means "until/as far as"; French "in/at" is "à" vs "dans" depending on meaning; etc.),
+  gender/number agreement on every article and adjective, and any idiom that doesn't translate
+  word-for-word. A native ${languageName} speaker must find the sentence completely natural and correct
+  with no hesitation.
+- For Japanese passive/causative/causative-passive items specifically: the given English sentence
+  already names both parties involved (the agent and the one affected) unambiguously with one of them
+  as its grammatical subject — write the Japanese so its own grammatical subject matches that SAME
+  party, so the two sentences describe the relationship the same unambiguous way. Do not silently swap
+  which party the sentence is "about" just because it would also be grammatically valid Japanese.
+- "verbFormTarget" is the exact conjugated verb form as it appears in "targetSentence" (e.g. "habría
+  dado", "aurait donné", or "書かれた"), correctly conjugated for the given form — this must match
+  exactly what was asked for, regardless of how the English sentence happened to be phrased.
+- Output nothing except the JSON object.`;
+}
+
+function callClaudeForTranslatePracticeSentencesBatch(language, items) {
+  const languageName = LANGUAGE_NAMES[language] || language;
+  const itemLines = items
+    .map((item, i) => `${i + 1}. English: "${item.englishSentence}"\n   ${formatPracticeItemVerbLine(item)}`)
+    .join("\n");
+  const userMessage = `Items:\n${itemLines}`;
+  // The strong model, same as every other sentence-mode generation call
+  // — this is the pass where translation accuracy actually matters.
+  return callClaudeJSONWithRetry(buildTranslatePracticeSentencesBatchPrompt(languageName), userMessage, 12000, 24000, GRAMMAR_CHECK_MODEL);
+}
+
+// Grades a learner's typed answer for sentence-mode: the conjugated
+// verb form must be correct for the answer to count, but everything
+// else (a wrong noun, minor word choice, spelling) gets corrected in
+// feedback without failing the question — exactly the split the user
+// asked for ("marking doesnt care about incorrect noun but still
+// corrects incorrect noun, the verb must be correct").
+const CHECK_CONJUGATION_SENTENCE_PROMPT = `You are grading a language learner's sentence-translation
+answer for a conjugation drill (Spanish, French, Japanese, or English — you'll be told which language
+they answered in). Scoring is ENTIRELY about whether they correctly conjugated/formed one specific
+target verb — everything else about the sentence should be corrected and shown, but must NOT affect
+whether the answer counts as correct. Respond with ONLY a JSON object (no markdown, no code fences, no
+explanation) with exactly this shape:
+
+{ "verbCorrect": boolean, "corrected": string, "note": string or null }
+
+Rules:
+- "verbCorrect" is true only if the learner's sentence contains that verb correctly conjugated/formed
+  for whatever was asked (tense/person for Spanish/French, or the specific special form — potential/
+  passive/causative/causative-passive — for Japanese) — a wrong form, or an entirely different verb, is
+  false. Minor accent or spelling slips in the verb itself still count as correct if the intended form
+  is clearly right.
+- For Japanese specifically: writing the verb in kanji, in all-hiragana, or in a mix, are all equally
+  acceptable — judge only whether the grammatical form is right, never penalize kanji vs. kana choice.
+  The causative-passive form's common contraction (せられる -> される, e.g. 言わせられる/言わされる) is
+  also equally acceptable either way.
+- The reference sentence is a guide, not infallible ground truth — judge correctness with your own
+  best knowledge of the language. If the reference itself contains an error (a wrong preposition,
+  wrong gender agreement, an unnatural calque, an ambiguous or mismatched voice/subject, etc.), do NOT
+  treat that error as correct just because it matches the reference — flag and fix it in "corrected"
+  like any other mistake, and don't let it affect "verbCorrect" either way (that's about the verb only,
+  per the rule above).
+- "corrected" is the learner's OWN sentence with only what's actually wrong fixed (verb conjugation if
+  wrong, agreement, wrong word choice such as a mistaken noun, spelling, or any other genuine error —
+  including the case above where the learner correctly matched a flawed part of the reference) — keep
+  their own wording and structure wherever it's valid rather than substituting the reference sentence.
+  If their sentence was already fully correct, "corrected" should be identical to what they typed
+  (trivial capitalization/punctuation cleanup aside).
+- "note" is ONE short, encouraging sentence in plain teaching language pointing out anything that was
+  off (the verb, or anything else that got corrected) — or null if the answer needed no correction at
+  all.
+- Judge the sentence in whichever language the learner answered in, as told to you — never mix
+  languages.`;
+
+function callClaudeForCheckConjugationSentence(answerLanguage, referenceSentence, expectedVerbForm, userAnswer) {
+  const userMessage = `Language answered in: ${LANGUAGE_NAMES[answerLanguage] || answerLanguage}.\nReference sentence (a guide, not necessarily error-free — see rules): ${referenceSentence}\nThe verb form that must appear, correctly conjugated: "${expectedVerbForm}"\nLearner's answer: ${userAnswer}`;
+  return callClaudeJSONWithRetry(CHECK_CONJUGATION_SENTENCE_PROMPT, userMessage, 2000, 4000, GRAMMAR_CHECK_MODEL);
+}
+
+// Japanese sentence-mode generation — deliberately a separate prompt
+// from the Spanish/French one above rather than a shared one with
+// branches, because the shape of the practice is genuinely different:
+// no tense/person grid, just one of four special verb forms (potential/
+// passive/causative/causative-passive) applied to a verb. The
+// causative/passive family also has a failure mode Spanish/French don't:
+// each of those forms involves TWO parties (an agent and someone
+// affected), and the same Japanese sentence can be phrased in English
+// with either party as the grammatical subject ("my mom let me play
+// outside" vs. "I was allowed to play outside by my mom" — same event,
+// different English voice) — a learner needs the sentence itself to
+// make unambiguously clear who's who, not just a technically-valid
+// translation that could be read either way.
+const GENERATE_JA_CONJUGATION_SENTENCE_PROMPT = `You write natural, level-appropriate Japanese
+practice sentences for a language-learning app's conjugation drill, focused on ONE of four special
+verb forms: potential (可能形 — "can do"), passive (受身形 — "something happens to the subject"),
+causative (使役形 — "make/let someone do"), or causative-passive (使役受身形 — "was made to do"). Given
+a verb (kanji, reading, English gloss) and which of the four forms to use, write ONE natural Japanese
+sentence using the verb correctly in that exact form, then give a natural, UNAMBIGUOUS English
+translation of that exact sentence. Respond with ONLY a JSON object (no markdown, no code fences, no
+explanation) with exactly this shape:
+
+{ "japaneseSentence": string, "englishSentence": string, "verbFormJapanese": string, "verbFormEnglish": string }
+
+Rules:
+- Accuracy matters enormously — this becomes the learner's actual study material. A native Japanese
+  speaker must find "japaneseSentence" completely natural, and "englishSentence" must be a faithful,
+  natural, UNAMBIGUOUS translation of it (not stiff word-for-word).
+- CRITICAL for passive, causative, and causative-passive (this does not apply to potential, which only
+  involves one party): these forms involve two parties — an agent (the one causing/allowing/doing the
+  action to another) and someone affected (the one being made to act, or being acted upon). The same
+  underlying event can be phrased in English with EITHER party as the grammatical subject (e.g. "my mom
+  let me play outside" vs. "I was allowed to play outside by my mom" both describe the same event). To
+  avoid this ambiguity:
+  - ALWAYS name or clearly identify BOTH parties explicitly in both sentences — never leave either one
+    implicit or unstated (e.g. always say who the causer/agent is — a parent, teacher, friend, boss,
+    etc. — and who is caused/affected — a specific person, "me", "the students", etc.).
+  - The Japanese sentence's actual grammatical subject determines the voice — write the English
+    translation to clearly reflect THAT SAME voice as its own grammatical subject too, so the two
+    sentences describe the relationship the same unambiguous way (if the Japanese subject is the one
+    being made/allowed to act, phrase the English as "X was made/allowed to do Y by Z" with X as the
+    subject; if the Japanese subject is the one causing/allowing, phrase it as "Z made/let X do Y" with
+    Z as the subject) — never phrase the English so it could plausibly be read either way.
+- "verbFormJapanese" is the exact conjugated verb form as it appears in "japaneseSentence" (kanji form,
+  e.g. "遊ばせてもらった" or "書かれた"). "verbFormEnglish" is the corresponding conjugated verb phrase
+  as it appears in "englishSentence" (e.g. "was allowed to play", "was written").
+- The sentence must clearly and unambiguously use the requested form — don't hedge into a different one
+  or into plain non-conjugated Japanese.
+- Keep the sentence short (roughly 6-16 Japanese characters' worth of content beyond the verb itself)
+  and naturally include 1-2 pieces of vocabulary beyond basic function words so there's something a
+  learner might not already know — but keep it natural, not contrived or a vocabulary showcase.
+- Never reuse a sentence you've already been asked to avoid (a list may be given).
+- Output nothing except the JSON object.`;
+
+// Sentence-mode content becomes the learner's study material, so it's
+// worth the stronger model here (same reasoning as the Spanish/French
+// version) — especially given how easy the voice-ambiguity failure mode
+// above is to get subtly wrong.
+function callClaudeForGenerateJaConjugationSentence(kanji, reading, meaning, formLabel, avoidSentences) {
+  const avoidLines = (avoidSentences || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoidSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const userMessage = `Verb: ${kanji} (${reading}) — ${meaning}.\nForm: ${formLabel}.${avoidLines}`;
+  return callClaudeJSONWithRetry(GENERATE_JA_CONJUGATION_SENTENCE_PROMPT, userMessage, 2000, 4000, GRAMMAR_CHECK_MODEL);
+}
+
+// Batch version of the above — see GENERATE_CONJUGATION_SENTENCES_BATCH_PROMPT
+// for why (one longer wait up front instead of one short wait per
+// question, and cheaper since the prompt + thinking overhead is only
+// paid once for the whole batch). Same voice-disambiguation rules as the
+// single version, restated for a list.
+const GENERATE_JA_CONJUGATION_SENTENCES_BATCH_PROMPT = `You write natural, level-appropriate Japanese
+practice sentences for a language-learning app's conjugation drill, each one focused on ONE of four
+special verb forms: potential (可能形 — "can do"), passive (受身形 — "something happens to the
+subject"), causative (使役形 — "make/let someone do"), or causative-passive (使役受身形 — "was made to
+do"). You'll be given a numbered list of items, each specifying a verb (kanji, reading, English gloss)
+and which of the four forms to use. For EACH item, write ONE natural Japanese sentence using that verb
+correctly in that exact form, then give a natural, UNAMBIGUOUS English translation of that exact
+sentence. Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly
+this shape:
+
+{ "sentences": [ { "japaneseSentence": string, "englishSentence": string, "verbFormJapanese": string, "verbFormEnglish": string }, ... ] }
+
+Rules:
+- Return exactly one output object per input item, IN THE SAME ORDER as the input list — the Nth
+  output object must answer the Nth input item.
+- Accuracy matters enormously — this becomes the learner's actual study material. A native Japanese
+  speaker must find each "japaneseSentence" completely natural, and each "englishSentence" must be a
+  faithful, natural, UNAMBIGUOUS translation of it (not stiff word-for-word).
+- CRITICAL for passive, causative, and causative-passive items (this does not apply to potential,
+  which only involves one party): these forms involve two parties — an agent (the one causing/
+  allowing/doing the action to another) and someone affected (the one being made to act, or being
+  acted upon). The same underlying event can be phrased in English with EITHER party as the
+  grammatical subject (e.g. "my mom let me play outside" vs. "I was allowed to play outside by my
+  mom" both describe the same event). To avoid this ambiguity, for every such item:
+  - ALWAYS name or clearly identify BOTH parties explicitly in both sentences — never leave either
+    one implicit or unstated (e.g. always say who the causer/agent is — a parent, teacher, friend,
+    boss, etc. — and who is caused/affected — a specific person, "me", "the students", etc.).
+  - The Japanese sentence's actual grammatical subject determines the voice — write the English
+    translation to clearly reflect THAT SAME voice as its own grammatical subject too, so the two
+    sentences describe the relationship the same unambiguous way (if the Japanese subject is the one
+    being made/allowed to act, phrase the English as "X was made/allowed to do Y by Z" with X as the
+    subject; if the Japanese subject is the one causing/allowing, phrase it as "Z made/let X do Y"
+    with Z as the subject) — never phrase the English so it could plausibly be read either way.
+- "verbFormJapanese" is the exact conjugated verb form as it appears in "japaneseSentence" (kanji
+  form, e.g. "遊ばせてもらった" or "書かれた"). "verbFormEnglish" is the corresponding conjugated verb
+  phrase as it appears in "englishSentence" (e.g. "was allowed to play", "was written").
+- Each sentence must clearly and unambiguously use its requested form — don't hedge into a different
+  one or into plain non-conjugated Japanese.
+- Keep each sentence short (roughly 6-16 Japanese characters' worth of content beyond the verb
+  itself) and naturally include 1-2 pieces of vocabulary beyond basic function words so there's
+  something a learner might not already know — but keep it natural, not contrived or a vocabulary
+  showcase.
+- Vary sentence structure, scenario, and phrasing across the list — no two sentences in this batch
+  should feel like copies of each other with just the verb swapped, even when several items share
+  the same verb/form.
+- Never reuse a sentence you've already been asked to avoid (a list may be given).
+- Output nothing except the JSON object.`;
+
+function callClaudeForGenerateJaConjugationSentencesBatch(items, avoidSentences) {
+  const avoidLines = (avoidSentences || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoidSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const itemLines = items
+    .map((item, i) => `${i + 1}. Verb: ${item.kanji} (${item.reading}) — ${item.meaning || ""}. Form: ${item.formLabel}.`)
+    .join("\n");
+  const userMessage = `Items:\n${itemLines}${avoidLines}`;
+  return callClaudeJSONWithRetry(GENERATE_JA_CONJUGATION_SENTENCES_BATCH_PROMPT, userMessage, 12000, 24000, GRAMMAR_CHECK_MODEL);
+}
+
+// Used when saving a Grammar structure card — identifies what specific
+// grammar point the card's header/explanation/examples actually
+// describe, so the app can later generate fresh practice for exactly
+// that point. Deliberately allowed to say "no clear point" rather than
+// forcing a label onto examples that don't actually share one — a
+// wrong/forced label would produce useless practice later.
+const CLASSIFY_GRAMMAR_POINT_PROMPT = `You are a language tutor reviewing a learner's own grammar
+note (Spanish or Japanese — you'll be told which). They've named a pattern, explained it in their own
+words, written their own example sentence(s), and optionally drafted a structure template (the pattern
+with its variable slots marked in brackets, e.g. "Si + [imperfecto de subjuntivo], [condicional]").
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "label": string or null, "note": string, "refinedStructureTemplate": string or null }
+
+Rules:
+- "label" is a short, precise name for the grammatical construction actually being demonstrated —
+  formal enough to be useful (e.g. "〜てほしい (want someone else to do something)" or "estar + gerund
+  (progressive aspect)"), but still readable to a learner, not raw linguistics jargon on its own.
+- Base "label" on what the example sentences actually show, not just the learner's own header/
+  explanation text — if their name/explanation is close but the examples reveal it's really a
+  slightly different or more specific construction, label the construction the examples actually
+  demonstrate.
+- Set "label" to null if: there are no example sentences to judge from, the example(s) don't share a
+  single clear grammatical construction (e.g. they're about entirely different, unrelated patterns),
+  or the "pattern" described is really just vocabulary/a fixed phrase rather than a grammatical
+  construction. Don't force a label onto something incoherent.
+- "note" is ONE short, encouraging sentence. If "label" is set, briefly confirm what was recognized
+  (e.g. "This is the てほしい construction for wanting someone else to do something."). If "label" is
+  null, briefly and kindly explain why no single clear point was found and what would help (e.g. "These
+  two examples show different constructions — try keeping one pattern per card, or add another example
+  of the same one.").
+- "refinedStructureTemplate": null if no structure template draft was given — never invent one from
+  nothing. If a draft WAS given, return a cleaned-up version: consistent bracket slot naming (the same
+  slot named the same way throughout), balanced brackets, and if a slot is genuinely ambiguous, keep it
+  but note the ambiguity in its own label (e.g. "[Verb — tense unclear]") rather than guessing. If the
+  draft is already clean, return it unchanged (still a string, not null). Never change the substance of
+  the pattern the learner described — only clean up naming/formatting/bracket balance.
+- Judge Spanish or Japanese as told by the language given — never mix the two.`;
+
+function grammarCardContextForPrompt(header, explanation, examples, structureTemplate) {
+  const exampleLines = (examples || [])
+    .filter((ex) => ex && ex.target)
+    .map((ex) => `- ${ex.target}${ex.translation ? ` (${ex.translation})` : ""}`)
+    .join("\n");
+  const structureLine = (structureTemplate || "").trim() || "(none given)";
+  return `Pattern name: ${header}\nLearner's explanation: ${explanation || "(none given)"}\nExample sentences:\n${exampleLines || "(none given)"}\nStructure template draft: ${structureLine}`;
+}
+
+function callClaudeForClassifyGrammarPoint(header, explanation, examples, language, structureTemplate) {
+  const userMessage = `Language: ${LANGUAGE_NAMES[language] || language}.\n\n${grammarCardContextForPrompt(header, explanation, examples, structureTemplate)}`;
+  return callClaudeJSON(CLASSIFY_GRAMMAR_POINT_PROMPT, userMessage, 500);
+}
+
+// ---------------------------------------------------------------------
+// Custom conjugation/structure notes (Grammer_New/grammar-add-conjugation-
+// note.html — currently Japanese "Tenses and verb conjugations" only).
+// The learner drafts their OWN structure template (e.g. "V+たがる") from
+// one worked example, rather than picking from the hand-authored library
+// — so unlike ja-conjugator.js's four hardcoded forms, everything here
+// is AI-generated: there's no local rule-engine for an arbitrary,
+// learner-invented pattern.
+// ---------------------------------------------------------------------
+
+function customConjugationContextForPrompt(name, structureTemplate, formationRule, exampleTL, exampleEN) {
+  return (
+    `Pattern name: ${name}\n` +
+    `Structure template: ${structureTemplate}\n` +
+    `Formation rule: ${formationRule || "(none given)"}\n` +
+    `Worked example: ${exampleTL || "(none given)"} / ${exampleEN || "(none given)"}`
+  );
+}
+
+// "AI detect" on the Structure template box — given one worked example
+// plus the learner's own draft template, returns a plain-English
+// formation rule (how to actually build the pattern from a verb) and a
+// cleaned-up version of the template itself. Unlike classify-grammar-
+// point, there's no "no clear pattern found" case: the learner has
+// already supplied a concrete template to work from, so this always
+// does its best with what's given rather than declining to answer.
+const DETECT_CONJUGATION_STRUCTURE_PROMPT = `You are a language tutor reviewing a learner's own
+custom grammar note for a conjugation/structure pattern (Japanese, Spanish, or French — you'll be
+told which). They've named the pattern, given ONE worked example (a target-language sentence plus
+its English translation), and drafted a structure template — the pattern written out with its
+variable slot(s) marked in brackets (e.g. "[Verb-たがる]" or "V + たがる"). Respond with ONLY a JSON
+object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "formationRule": string, "refinedStructureTemplate": string }
+
+Rules:
+- "formationRule" is a short, precise, practical explanation of HOW to form this pattern from a
+  plain verb — e.g. "Attach たがる to a verb's ます-stem to express that someone (usually 3rd person)
+  wants to do that action." Base it on what the worked example actually demonstrates, not just the
+  learner's own template text — if the template is close but the example reveals a more specific or
+  slightly different rule, describe the rule the example actually shows.
+- "refinedStructureTemplate" is a cleaned-up version of the learner's structure template: consistent
+  bracket slot naming, balanced brackets, and — if a slot is genuinely ambiguous — keep the slot but
+  make its label describe the ambiguity (e.g. "[Verb — stem unclear]") rather than guessing. Never
+  change the substance of the pattern, only clean up naming/formatting/bracket balance. If the draft
+  is already clean, return it unchanged (still a string).
+- Both fields are always required.`;
+
+function callClaudeForDetectConjugationStructure(name, exampleTL, exampleEN, structureTemplate, language) {
+  const userMessage =
+    `Language: ${LANGUAGE_NAMES[language] || language}.\n\n` +
+    `Pattern name: ${name}\nExample sentence: ${exampleTL || "(none given)"}\n` +
+    `English translation: ${exampleEN || "(none given)"}\nStructure template draft: ${structureTemplate}`;
+  return callClaudeJSON(DETECT_CONJUGATION_STRUCTURE_PROMPT, userMessage, 400);
+}
+
+// "Generate 3 more examples" — only offered once the structure template
+// has been confirmed (see the add-page's own gating). Same shape as the
+// learner's own examples array ({ target, translation }) so the results
+// drop straight into the existing example-row UI to review/edit/discard.
+const GENERATE_CONJUGATION_EXAMPLES_PROMPT = `You write natural, level-appropriate example sentences
+for a learner's own custom grammar note (Japanese, Spanish, or French — you'll be told which),
+demonstrating one specific pattern they've defined themselves (name, structure template, formation
+rule, and one worked example are all given). Respond with ONLY a JSON object (no markdown, no code
+fences, no explanation) with exactly this shape:
+
+{ "examples": [ { "target": string, "translation": string }, ... ] }
+
+Rules:
+- Return exactly the requested number of NEW example sentences, each one correctly demonstrating
+  the pattern described.
+- Vary vocabulary, subject, and scenario across the examples and from the worked example already
+  given — no near-duplicates, and never reuse anything in an "avoid" list provided.
+- "target" is the sentence in the target language; "translation" is a natural, faithful English
+  translation of that exact sentence.
+- A native speaker must find every "target" sentence completely natural for the level implied by
+  the worked example.`;
+
+function callClaudeForGenerateConjugationExamples(name, structureTemplate, formationRule, exampleTL, exampleEN, language, avoidTargets, count) {
+  const avoidLines = (avoidTargets || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoidTargets.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const userMessage =
+    `Language: ${LANGUAGE_NAMES[language] || language}. Generate ${count || 3} new examples.\n\n` +
+    `${customConjugationContextForPrompt(name, structureTemplate, formationRule, exampleTL, exampleEN)}${avoidLines}`;
+  return callClaudeJSON(GENERATE_CONJUGATION_EXAMPLES_PROMPT, userMessage, 1200);
+}
+
+// Powers both "Generate quick conjugation test" (style: "word") and the
+// sentence test (style: "sentence") on the same add-page — both are
+// self-graded reveal-style practice (like GENERATE_CARD_PRACTICE_PROMPT
+// below), since these are freshly AI-generated sentences with no single
+// "correct" answer to exact-match against.
+const GENERATE_CONJUGATION_PRACTICE_PROMPT = `You generate short self-graded practice items for a
+learner's own custom grammar note (Japanese, Spanish, or French — you'll be told which), for one
+specific pattern they've defined themselves (name, structure template, formation rule, and one
+worked example are all given). You'll also be told a "style": "word" for a quick, single-verb
+conjugation drill, or "sentence" for a fuller, natural whole-sentence translation task — these are
+different kinds of items, not just different lengths. Respond with ONLY a JSON object (no markdown,
+no code fences, no explanation) with exactly this shape:
+
+{ "items": [ { "promptEnglish": string, "answerTarget": string }, ... ] }
+
+Rules for "word" style (a conjugation drill, NOT a sentence-translation task):
+- Each item is built around ONE common verb, conjugated according to this pattern — nothing else.
+- "promptEnglish" names just that one verb and tense, phrased the way this pattern's own meaning
+  naturally reads (e.g. for a "want to" pattern: "she wants to eat" for a present-tense item, "she
+  wanted to eat" for a past-tense item) — never a fuller descriptive sentence with extra clauses,
+  objects, or context beyond what the pattern itself needs.
+- "answerTarget" is ONLY the single conjugated word/phrase that results from applying the pattern to
+  that verb (in the past-tense form for past-tense items) — never a full sentence with its own
+  subject, particles, or object beyond the bare minimum the pattern requires.
+- Include a genuine mix of present-tense and past-tense items (roughly half each) across the list —
+  this drill specifically targets verb conjugation, so both tenses must be exercised.
+- Vary the verb across items — no repeats, and never reuse anything in an "avoid" list provided.
+
+Rules for "sentence" style (a fuller translation task):
+- "promptEnglish" is a short English cue that calls for this exact pattern (e.g. "She wants to eat
+  sushi.") — phrased so the learner has to produce the pattern themselves, not a fill-in-the-blank
+  of its own wording.
+- "answerTarget" is ONE natural, correct sentence in the target language, correctly using the
+  pattern, that answers "promptEnglish".
+- Write fuller, more naturalistic sentences, still centered on this one pattern.
+- Vary vocabulary, subject, and scenario across the list, and never reuse a sentence in any "avoid"
+  list provided.
+
+Shared rules:
+- Return exactly the requested number of items.
+- A native speaker must find every "answerTarget" completely natural.`;
+
+function callClaudeForGenerateConjugationPractice(name, structureTemplate, formationRule, exampleTL, exampleEN, language, style, avoid, count) {
+  const avoidLines = (avoid || []).length
+    ? `\n\nAvoid reusing (in either language) any of these previous sentences:\n${avoid.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const userMessage =
+    `Language: ${LANGUAGE_NAMES[language] || language}. Style: ${style === "sentence" ? "sentence" : "word"}. ` +
+    `Generate ${count || 5} items.\n\n` +
+    `${customConjugationContextForPrompt(name, structureTemplate, formationRule, exampleTL, exampleEN)}${avoidLines}`;
+  return callClaudeJSONWithRetry(GENERATE_CONJUGATION_PRACTICE_PROMPT, userMessage, 2000, 4000, GRAMMAR_CHECK_MODEL);
+}
+
+// Powers a structure card's "Test me on this" practice — only offered
+// once a card has a recognized label (see classify above). Generates
+// FRESH situational prompts + model answers for the same construction,
+// distinct from the learner's own saved examples, for self-graded
+// (reveal-the-answer) practice rather than a strict auto-graded quiz —
+// there are usually several valid phrasings for a given situation, so
+// exact-match grading would punish correct answers unfairly.
+const GENERATE_CARD_PRACTICE_PROMPT = `You are a language tutor generating short practice for a
+learner's own grammar note (Spanish or Japanese — you'll be told which). Respond with ONLY a JSON
+object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "items": [ { "promptEnglish": string, "exampleAnswer": string }, ... ] }
+
+Rules:
+- Generate exactly 3 items.
+- "promptEnglish" is a short situation in English that calls for this exact construction, phrased so
+  the learner has to produce it themselves (e.g. "Say you want your friend to call you back." or "Say
+  it looks like it's about to rain.") — not a direct fill-in-the-blank of the construction's own
+  wording, and not a translation of one of the learner's own example sentences.
+- "exampleAnswer" is ONE natural, correct sentence in the target language that correctly answers
+  "promptEnglish" using this construction — this is a model answer for the learner to compare their
+  own attempt against, not the only acceptable phrasing, so keep it natural rather than contrived.
+- Do not reuse or lightly reword any of the learner's own example sentences or any sentence listed to
+  avoid repeating.
+- Judge Spanish or Japanese as told by the language given — never mix the two.`;
+
+function callClaudeForCardPractice(header, explanation, label, examples, language, excludeSentences) {
+  const excludeLines = (excludeSentences || []).length
+    ? `\n\nDo not reuse or lightly reword any of these:\n${excludeSentences.map((s) => `- ${s}`).join("\n")}`
+    : "";
+  const labelLine = label ? `Recognized grammar point: ${label}\n` : "";
+  const userMessage = `Language: ${LANGUAGE_NAMES[language] || language}.\n\n${labelLine}${grammarCardContextForPrompt(header, explanation, examples)}${excludeLines}`;
+  return callClaudeJSON(GENERATE_CARD_PRACTICE_PROMPT, userMessage, 800);
+}
+
+// Used by the Writing bubble's "Grammar check" button — a full-sentence
+// pass over an entire journal entry, distinct from (and independent of)
+// "Vocab check": Vocab check only resolves <bracketed> unknown words via
+// a plain dictionary lookup; Grammar check reads the whole entry for
+// real sentence-level correctness (conjugation, agreement, particles,
+// word order, spelling/punctuation) — the two are separate buttons on
+// purpose, so a teacher could eventually permit one without the other.
+// Grammar concepts a correction can optionally be tagged with — kept in
+// sync by hand with js/grammar-concepts.js on the frontend. Only tag a
+// correction with one of these EXACT keys if it's a genuinely clean
+// match; everything else gets concept: null, which just means "no
+// practice generator exists for this one yet," not that it's wrong.
+const GRAMMAR_CONCEPT_KEYS = {
+  "verb-transitivity": {
+    label: "Transitive vs Intransitive Verbs",
+    languages: ["ja"],
+    hint: "the learner used a transitive verb where an intransitive one was needed, or vice versa (e.g. 開く vs 開ける, 止まる vs 止める) — a mismatch in whether the verb takes a direct object, not a conjugation or tense error",
+  },
+};
+
+function grammarConceptListForPrompt() {
+  return Object.entries(GRAMMAR_CONCEPT_KEYS)
+    .map(([key, def]) => `  - "${key}" (${def.label}, ${def.languages.join("/")} only): ${def.hint}`)
+    .join("\n");
+}
+
+const WRITING_GRAMMAR_CHECK_PROMPT = `You are a careful, thorough language tutor grammar-checking
+a learner's own journal/diary entry (Spanish, Japanese, or French — you'll be told which). Respond
+with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "correctedText": string }
+
+This response is then mechanically diffed, character by character, against the learner's OWN
+original text (not anything you echo back) to find and highlight exactly what changed, and to
+split the result into per-sentence boxes for the learner. That means your ONLY job is making
+"correctedText" fully and correctly fixed — you never need to (and should not) separately list,
+number, or explain the fixes, and you never need to reproduce "original" yourself.
+
+Rules:
+- "correctedText" is the FULL entry, corrected — same paragraph breaks, same overall content and
+  voice — with EVERY actual grammatical error fixed: wrong conjugations, subject/verb or
+  gender/number agreement, wrong or missing particles (Japanese: は/が/を/に/で/へ/と/も etc.), wrong
+  tense/aspect, incorrect word order, missing or wrong punctuation, misspellings, and any other real
+  mistake. Go through EVERY sentence carefully rather than stopping at the first or most obvious
+  problem in it — a single sentence can contain more than one distinct mistake, and every one of
+  them needs to be fixed, since nothing you miss here can be caught later (there is no second
+  chance — the diff only ever compares your one output against the original).
+- Leave every part that is ALREADY correct completely untouched, character for character — do not
+  paraphrase, reorder, or swap in different-but-also-valid wording for a sentence that has no actual
+  error, and do not silently "fix" a subtle one-character error by simply typing the correct form
+  from memory instead of keeping the surrounding text identical; every character that isn't part of
+  an actual fix must match the original exactly, or the diff will report a false change (or miss a
+  real one) there.
+- Do NOT rewrite for style, do NOT swap in fancier or different vocabulary, do NOT restructure a
+  sentence that's already grammatically correct, even if you'd have phrased it differently — this
+  is a grammar check, not an editor's rewrite.
+- If the text contains placeholder brackets like <word>, <a phrase>, or full-width ＜word＞ — leave
+  those EXACTLY as they appear, untouched, character for character. They're pending vocabulary the
+  learner hasn't resolved yet, not real target-language text, and are not part of this check.
+- If the entry has no errors at all, "correctedText" must be character-for-character identical to
+  the input — don't invent changes just to have something to report.
+- Judge Spanish, Japanese, or French as told by the language given — never mix languages.`;
+
+// correctedText alone runs roughly as long as the entry itself — AND,
+// on top of that, this model's adaptive thinking (on by default, and
+// not separately budgeted — see callClaudeJSON) can burn a large,
+// unpredictable chunk of max_tokens on reasoning before it even starts
+// the actual answer. A fixed budget can't promise enough headroom for
+// every entry, so this retries once at a much larger budget
+// specifically when the first attempt was cut off, rather than just
+// picking one bigger static number and hoping.
+async function callClaudeForWritingGrammarCheck(text, language) {
+  const userMessage = `Language: ${LANGUAGE_NAMES[language] || language}.\n\nEntry:\n${text}`;
+  try {
+    return await callClaudeJSON(WRITING_GRAMMAR_CHECK_PROMPT, userMessage, 12000, GRAMMAR_CHECK_MODEL);
+  } catch (err) {
+    if (!(err instanceof Error) || !/cut off before it finished/.test(err.message)) throw err;
+    return callClaudeJSON(WRITING_GRAMMAR_CHECK_PROMPT, userMessage, 24000, GRAMMAR_CHECK_MODEL);
+  }
+}
+
+// Powers a Grammar folder's "Practice this grammar point" option — only
+// exists for folders tagged with a recognized, practice-able concept
+// (see GRAMMAR_CONCEPT_KEYS above). Each concept needs its own prompt
+// builder since the shape of "practice" differs per concept; only
+// verb-transitivity (pair-recall) is implemented so far. A concept with
+// no builder here simply can't be practiced yet, even if it's a
+// recognized tag — matches the frontend's own practiceType gate.
+const GRAMMAR_PRACTICE_PROMPT_BUILDERS = {
+  "verb-transitivity": (excludeWords) => `You are generating flashcard-style practice pairs for a
+Japanese learner studying transitive/intransitive verb pairs (e.g. 開く／開ける, 止まる／止める).
+Respond with ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this
+shape:
+
+{ "pairs": [ { "transitive": { "word": string, "furigana": string }, "intransitive": { "word": string, "furigana": string }, "meaning": string }, ... ] }
+
+Rules:
+- Return 8 distinct, common, genuinely-paired transitive/intransitive verbs (both members of the
+  pair share the same root meaning and are commonly taught together, e.g. 開く(intransitive)/開ける
+  (transitive) "to open").
+- "word" is the dictionary/plain form written with normal kanji+kana (not romaji). "furigana" is
+  the reading in hiragana only.
+- "meaning" is a short shared English gloss for the pair, e.g. "open".
+- Favor everyday, frequently-used verbs a learner would actually encounter, not obscure ones.
+- Do not reuse any of these words (already seen this session): ${excludeWords.length ? excludeWords.join("、") : "(none yet)"}.`,
+};
+
+function callClaudeForGrammarPractice(concept, language, excludeWords) {
+  const builder = GRAMMAR_PRACTICE_PROMPT_BUILDERS[concept];
+  const conceptDef = GRAMMAR_CONCEPT_KEYS[concept];
+  if (!builder || !conceptDef || !conceptDef.languages.includes(language)) {
+    return Promise.reject(new Error("No practice generator available for this grammar concept."));
+  }
+  const prompt = builder(Array.isArray(excludeWords) ? excludeWords : []);
+  return callClaudeJSON(prompt, "Generate the practice set now.", 1500);
+}
+
+// Used by the Vocab Bank's "Import a vocab list" bulk-add option — a
+// learner pastes a whole vocabulary list (their own notes, something
+// copied from a textbook/worksheet/website) and this turns it into
+// clean { targetLang, english } pairs for them to review before
+// saving, rather than typing each word into the single-word form one
+// at a time.
+const VOCAB_LIST_EXTRACT_PROMPT = `You are helping a learner import a vocabulary list into their
+flashcard app. You'll be given a block of pasted text -- a vocabulary list copied from somewhere
+(a textbook, worksheet, website, or their own notes) -- plus which language it's for. Respond with
+ONLY a JSON object (no markdown, no code fences, no explanation) with exactly this shape:
+
+{ "words": [ { "targetLang": string, "english": string, "furigana": string or null }, ... ] }
+
+Rules:
+- Pull out every distinct vocabulary entry from the text, in the order they appear, and turn each
+  into one { "targetLang", "english" } pair.
+- Figure out which side of each entry is English and which is the target language yourself.
+  Pasted lists are inconsistent about order -- some go "word - translation", some go
+  "translation - word", some are two columns that got merged line by line -- don't assume one fixed
+  order for the whole list; judge each entry on its own.
+- If BOTH sides are already given for an entry, use them exactly as given rather than
+  re-translating (preserve their wording).
+- If only ONE side is given for an entry (just a target-language word with no visible English, or
+  vice versa), translate the missing side yourself.
+- Strip formatting noise: numbering ("1.", "2)"), bullets, dashes/colons used purely as separators,
+  and stray punctuation that isn't part of the word itself.
+- Skip lines that clearly aren't vocabulary entries at all -- blank lines, section titles
+  ("Unit 3 Vocabulary", "Food & Drink"), page numbers, instructions to the reader.
+- If the target language is Japanese, "furigana" is that entry's reading written entirely in
+  hiragana (convert any katakana in the reading to hiragana too); for any other target language,
+  "furigana" is always null.
+- If you genuinely can't tell what an entry means, leave it out rather than guessing.
+- If the text has nothing in it that looks like vocabulary, return { "words": [] }.`;
+
+function callClaudeForVocabListExtract(text, language) {
+  const userMessage = `Target language: ${LANGUAGE_NAMES[language] || language}.\n\nPasted list:\n${text}`;
+  return callClaudeJSON(VOCAB_LIST_EXTRACT_PROMPT, userMessage, 4000);
+}
+
+// Anthropic's output content filter is a separate, somewhat
+// probabilistic pass after generation — it can trip on a screenshot
+// that's completely benign (nothing to do with our prompt) and often
+// succeeds on a plain retry. Worth a couple of automatic retries before
+// giving up and telling the user.
+function isContentFilterError(err) {
+  return /content filtering/i.test(err.message);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Screenshot -> passage text, for the Reading bubble's "upload an image
+// instead of copy/pasting" option. Plain-text response (not JSON) since
+// the only output we want is the transcription itself.
+function callClaudeVisionExtractOnce(base64Image, mediaType) {
+  return new Promise((resolve, reject) => {
+    if (!API_KEY) {
+      reject(new Error("ANTHROPIC_API_KEY is not set — copy .env.example to .env and add your key."));
+      return;
+    }
+
+    const payload = JSON.stringify({
+      model: MODEL,
+      max_tokens: 4000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mediaType, data: base64Image } },
+            {
+              type: "text",
+              text:
+                "Transcribe all the readable body text in this image exactly as written (fix nothing, " +
+                "don't translate). Preserve paragraph breaks as blank lines, but don't insert a line " +
+                "break just because a line wrapped in the image. Ignore UI chrome, headers/footers, " +
+                "page numbers, and watermarks unless they're clearly part of the passage itself. " +
+                "Respond with ONLY the transcribed text — no commentary, no markdown, no quotes.",
+            },
+          ],
+        },
+      ],
+    });
+
+    const req = https.request(
+      {
+        hostname: "api.anthropic.com",
+        path: "/v1/messages",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        // Collect raw Buffer chunks and decode ONCE at the end, rather
+        // than `body += chunk` (implicitly stringifying each chunk on
+        // its own) — a multi-byte UTF-8 character (any Japanese text,
+        // for example) can land split across two chunks on the wire,
+        // and decoding each chunk in isolation mangles that character
+        // into a replacement glyph (�) instead of waiting for the full
+        // byte sequence.
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if (res.statusCode !== 200) {
+            reject(new Error(`Claude API error ${res.statusCode}: ${body}`));
+            return;
+          }
+          try {
+            const data = JSON.parse(body);
+            const textBlock = Array.isArray(data.content) ? data.content.find((b) => b && b.type === "text" && b.text) : null;
+            if (!textBlock) {
+              const snippet = body.length > 600 ? `${body.slice(0, 600)}…` : body;
+              reject(new Error(`Unexpected response shape from Claude API. Raw response: ${snippet}`));
+              return;
+            }
+            resolve({ text: textBlock.text.trim() });
+          } catch (e) {
+            reject(new Error("Could not parse Claude's response: " + e.message));
+          }
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function callClaudeVisionExtract(base64Image, mediaType) {
+  const MAX_ATTEMPTS = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await callClaudeVisionExtractOnce(base64Image, mediaType);
+    } catch (err) {
+      lastErr = err;
+      if (!isContentFilterError(err) || attempt === MAX_ATTEMPTS) break;
+      console.warn(`  content filter hit on attempt ${attempt}, retrying...`);
+      await sleep(400 * attempt);
+    }
+  }
+  if (isContentFilterError(lastErr)) {
+    throw new Error(
+      "Anthropic's content filter blocked this a few times in a row — try cropping the screenshot down " +
+        "to just the passage text (no other tabs/windows/photos in frame), or paste the text instead."
+    );
+  }
+  throw lastErr;
+}
+
+// Serves the app's own static files (the HTML/CSS/JS one level up from
+// this file) so the whole thing can run as a single deployed service —
+// one URL for both the pages and the API, no separate static host and
+// no CORS setup needed for that half. Only used as a fallback, after
+// every API route above has already had a chance to match.
+const STATIC_ROOT = path.join(__dirname, "..");
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".ico": "image/x-icon",
+};
+
+/*
+  ---- Accounts / cross-device sync helpers ----
+
+  Everything below this comment and above serveStaticFile is the
+  accounts + per-user data sync layer: cookie-based sessions backed by
+  db.js's SQLite tables, replacing what used to be plain browser
+  localStorage. Auth is invite-only — there's no public signup route;
+  Mei's own account is bootstrapped from ADMIN_EMAIL/ADMIN_PASSWORD env
+  vars on first boot (see bottom of file), and she creates any other
+  account (e.g. a tester's) herself via the admin-only /api/admin/
+  create-user route, from admin.html.
+*/
+
+const SESSION_COOKIE_NAME = "idikai_session";
+
+function readJSONBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytes = 0;
+    req.on("data", (chunk) => {
+      chunks.push(chunk);
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        req.destroy();
+        reject(new Error("Request body too large."));
+      }
+    });
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw) return resolve({});
+      try {
+        resolve(JSON.parse(raw));
+      } catch (e) {
+        reject(new Error("Invalid JSON body."));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+// Like readJSONBody, but for a raw binary payload (a file upload) — no
+// JSON.parse, just hands back the concatenated Buffer as-is.
+function readRawBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytes = 0;
+    req.on("data", (chunk) => {
+      chunks.push(chunk);
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        req.destroy();
+        reject(new Error("File is too large."));
+      }
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  const cookies = {};
+  if (!header) return cookies;
+  header.split(";").forEach((part) => {
+    const eq = part.indexOf("=");
+    if (eq === -1) return;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+  });
+  return cookies;
+}
+
+// Claude-calling routes — gated behind login in the request handler.
+// Add any new AI route here too.
+const AI_ROUTES = new Set([
+  "/lookup",
+  "/lookup-kanji",
+  "/explain-grammar",
+  "/generate-examples",
+  "/check-example-sentence",
+  "/generate-conjugation-sentence",
+  "/generate-ja-conjugation-sentence",
+  "/generate-conjugation-sentences-batch",
+  "/generate-english-practice-sentences-batch",
+  "/translate-practice-sentences-batch",
+  "/generate-ja-conjugation-sentences-batch",
+  "/check-conjugation-sentence",
+  "/classify-grammar-point",
+  "/detect-conjugation-structure",
+  "/generate-conjugation-examples",
+  "/generate-conjugation-practice",
+  "/generate-card-practice",
+  "/check-conjugation",
+  "/extract-text",
+  "/check-writing-grammar",
+  "/generate-grammar-practice",
+  "/extract-vocab-list",
+]);
+
+function getSessionUser(req) {
+  const cookies = parseCookies(req);
+  const token = cookies[SESSION_COOKIE_NAME];
+  if (!token) return null;
+  return db.findUserBySessionToken(token);
+}
+
+// Render terminates TLS in front of the app, so req.socket.encrypted
+// isn't a reliable signal — x-forwarded-proto is what Render actually
+// sets. Locally (plain http://localhost) neither is set, so the
+// cookie correctly comes back non-Secure for local dev.
+function isHttpsRequest(req) {
+  return req.headers["x-forwarded-proto"] === "https";
+}
+
+function setSessionCookie(res, req, token, expiresAt) {
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${expiresAt.toUTCString()}`,
+  ];
+  if (isHttpsRequest(req)) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function clearSessionCookie(res, req) {
+  const parts = [`${SESSION_COOKIE_NAME}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"];
+  if (isHttpsRequest(req)) parts.push("Secure");
+  res.setHeader("Set-Cookie", parts.join("; "));
+}
+
+function sendJSON(res, statusCode, body) {
+  res.writeHead(statusCode, { "content-type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+// Handles every /api/* route. Returns true if it handled the request
+// (caller should stop), false if the path didn't match anything here.
+function handleApiRoute(req, res, url) {
+  // ---- POST /api/login { email, password } ----
+  if (url.pathname === "/api/login" && req.method === "POST") {
+    readJSONBody(req, 10 * 1024)
+      .then(({ email, password }) => {
+        if (!email || !password) return sendJSON(res, 400, { error: "Missing email or password." });
+        const user = db.findUserByEmail(email);
+        if (!user || !db.verifyPassword(password, user.password_salt, user.password_hash)) {
+          return sendJSON(res, 401, { error: "Incorrect email or password." });
+        }
+        const session = db.createSession(user.id);
+        setSessionCookie(res, req, session.token, session.expiresAt);
+        sendJSON(res, 200, { ok: true, user: { email: user.email, isAdmin: !!user.is_admin } });
+      })
+      .catch((err) => sendJSON(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // ---- POST /api/logout ----
+  if (url.pathname === "/api/logout" && req.method === "POST") {
+    const cookies = parseCookies(req);
+    const token = cookies[SESSION_COOKIE_NAME];
+    if (token) db.deleteSession(token);
+    clearSessionCookie(res, req);
+    sendJSON(res, 200, { ok: true });
+    return true;
+  }
+
+  // ---- GET /api/me ----
+  if (url.pathname === "/api/me" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    sendJSON(res, 200, { user: { email: user.email, isAdmin: !!user.is_admin } });
+    return true;
+  }
+
+  // ---- GET /api/data (this account's full synced data blob) ----
+  if (url.pathname === "/api/data" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    sendJSON(res, 200, db.getAllUserData(user.id));
+    return true;
+  }
+
+  // ---- POST /api/data { key, value } (upsert one storage key) ----
+  if (url.pathname === "/api/data" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    readJSONBody(req, 5 * 1024 * 1024)
+      .then(({ key, value }) => {
+        if (!key) return sendJSON(res, 400, { error: "Missing key." });
+        db.setUserData(user.id, key, value);
+        sendJSON(res, 200, { ok: true });
+      })
+      .catch((err) => sendJSON(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // ---- POST /api/import { data: {...} } ----
+  // One-time (or safely re-runnable) bulk import for the "bring my old
+  // browser's localStorage into my new account" migration page. Never
+  // overwrites a key the account already has a value for.
+  if (url.pathname === "/api/import" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    readJSONBody(req, 20 * 1024 * 1024)
+      .then(({ data }) => {
+        if (!data || typeof data !== "object") return sendJSON(res, 400, { error: "Missing data object." });
+        const result = db.importUserData(user.id, data, false);
+        sendJSON(res, 200, { ok: true, ...result });
+      })
+      .catch((err) => sendJSON(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // ---- GET /api/export (download this account's full data as JSON) ----
+  // A one-click, always-available safety net for the account owner —
+  // completely independent of the server's own automatic backups, so
+  // there's always an off-server copy too if anything ever goes wrong.
+  if (url.pathname === "/api/export" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    const data = db.getAllUserData(user.id);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `idikai-export-${stamp}.json`;
+    res.writeHead(200, {
+      "content-type": "application/json",
+      "content-disposition": `attachment; filename="${filename}"`,
+    });
+    res.end(JSON.stringify(data, null, 2));
+    return true;
+  }
+
+  // ---- GET /api/admin/backups (admin only) — list automatic full-DB backups ----
+  if (url.pathname === "/api/admin/backups" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!user.is_admin) return sendJSON(res, 403, { error: "Admin only." }) || true;
+    sendJSON(res, 200, { backups: db.listBackups() });
+    return true;
+  }
+
+  // ---- POST /api/admin/backups (admin only) — trigger a backup right now ----
+  if (url.pathname === "/api/admin/backups" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!user.is_admin) return sendJSON(res, 403, { error: "Admin only." }) || true;
+    const dest = db.backupDatabase();
+    if (!dest) return sendJSON(res, 500, { error: "Backup failed — check server logs." }) || true;
+    sendJSON(res, 200, { ok: true });
+    return true;
+  }
+
+  // ---- GET /api/admin/backups/:filename (admin only) — download one raw .db backup ----
+  if (url.pathname.startsWith("/api/admin/backups/") && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!user.is_admin) return sendJSON(res, 403, { error: "Admin only." }) || true;
+    const name = decodeURIComponent(url.pathname.slice("/api/admin/backups/".length));
+    const full = db.getBackupPath(name);
+    if (!full) return sendJSON(res, 404, { error: "Backup not found." }) || true;
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      "content-disposition": `attachment; filename="${name}"`,
+    });
+    fs.createReadStream(full).pipe(res);
+    return true;
+  }
+
+  // ---- GET /api/admin/users (admin only) ----
+  if (url.pathname === "/api/admin/users" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!user.is_admin) return sendJSON(res, 403, { error: "Admin only." }) || true;
+    sendJSON(res, 200, { users: db.listUsers() });
+    return true;
+  }
+
+  // ---- POST /api/admin/create-user { email, password } (admin only) ----
+  // The whole "invite-only" story: there is no public signup route at
+  // all, only this one, gated on an existing admin's session.
+  if (url.pathname === "/api/admin/create-user" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!user.is_admin) return sendJSON(res, 403, { error: "Admin only." }) || true;
+    readJSONBody(req, 10 * 1024)
+      .then(({ email, password }) => {
+        if (!email || !password) return sendJSON(res, 400, { error: "Missing email or password." });
+        if (password.length < 8) return sendJSON(res, 400, { error: "Password must be at least 8 characters." });
+        if (db.findUserByEmail(email)) return sendJSON(res, 409, { error: "That email already has an account." });
+        const created = db.createUser(email, password, false);
+        sendJSON(res, 200, { ok: true, user: { email: created.email } });
+      })
+      .catch((err) => sendJSON(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // ---- POST /api/storage-locker-upload ----
+  // Body is the raw file bytes (not JSON) — the browser sends them
+  // straight from a File object. The original name comes URL-encoded
+  // in a header (headers must be ASCII) and the MIME type comes from
+  // the request's own Content-Type, exactly as the browser reported it
+  // for that file. Files go to Cloudflare R2, never through db.js —
+  // that database/backup system is explicitly sized for small
+  // text-only data, not binary uploads.
+  if (url.pathname === "/api/storage-locker-upload" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!r2.isR2Configured()) {
+      return sendJSON(res, 503, { error: "File uploads aren't set up on this server yet." }) || true;
+    }
+
+    let originalName = "file";
+    try {
+      originalName = decodeURIComponent(req.headers["x-file-name"] || "file");
+    } catch (e) {
+      // Malformed header — fall back to the default name below.
+    }
+    const ext = path.extname(originalName).toLowerCase();
+    const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      return sendJSON(res, 400, { error: "Only PDF and Word documents (.pdf, .doc, .docx) can be uploaded." }) || true;
+    }
+    const sanitizedName = originalName.replace(/[/\\]/g, "_").replace(/[^\w.\- ]/g, "_").slice(0, 150) || "file";
+    const contentType = req.headers["content-type"] || "application/octet-stream";
+
+    // 25MB per file — generous for any homework PDF/Word doc, well
+    // inside R2's free tier, and no risk of buffering something huge
+    // in memory.
+    readRawBody(req, 25 * 1024 * 1024)
+      .then((buffer) => {
+        if (!buffer.length) return sendJSON(res, 400, { error: "The uploaded file is empty." });
+        const fileKey = `storage-locker/${user.id}/${crypto.randomUUID()}-${sanitizedName}`;
+        return r2
+          .uploadToR2(fileKey, buffer, contentType)
+          .then(() => {
+            sendJSON(res, 200, {
+              ok: true,
+              fileKey,
+              fileName: sanitizedName,
+              fileType: contentType,
+              fileSize: buffer.length,
+            });
+          });
+      })
+      .catch((err) => {
+        console.error("Storage Locker upload failed:", err.message);
+        sendJSON(res, 400, { error: err.message });
+      });
+    return true;
+  }
+
+  // ---- GET /api/storage-locker-download?key=...&name=... ----
+  // Ownership is checked by simple key-prefix matching (every file's
+  // key is namespaced storage-locker/<userId>/...) rather than any DB
+  // lookup, since these R2 endpoints are intentionally decoupled from
+  // the JSON-blob storage system. Redirects to a short-lived presigned
+  // R2 URL — PDFs open inline (in the browser tab), everything else
+  // downloads, matching the earlier "just download Word docs" choice.
+  if (url.pathname === "/api/storage-locker-download" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!r2.isR2Configured()) {
+      return sendJSON(res, 503, { error: "File uploads aren't set up on this server yet." }) || true;
+    }
+    const fileKey = url.searchParams.get("key") || "";
+    // The display/download name comes from the query param — it can
+    // change if the learner renames the item — but disposition (inline
+    // vs. download) is decided from the fileKey's own extension, which
+    // always matches the real stored file and never changes on rename.
+    let fileName = url.searchParams.get("name") || "file";
+    if (!fileKey.startsWith(`storage-locker/${user.id}/`)) {
+      return sendJSON(res, 403, { error: "Not your file." }) || true;
+    }
+    const keyExt = path.extname(fileKey).toLowerCase();
+    // If a rename dropped the extension (e.g. titled just "Chapter 4"),
+    // put the real one back so the downloaded file still opens correctly.
+    if (keyExt && path.extname(fileName).toLowerCase() !== keyExt) fileName += keyExt;
+    const disposition = keyExt === ".pdf" ? "inline" : "attachment";
+    try {
+      const presignedUrl = r2.getPresignedDownloadUrl(fileKey, fileName, disposition, 300);
+      res.writeHead(302, { Location: presignedUrl });
+      res.end();
+    } catch (err) {
+      sendJSON(res, 500, { error: err.message });
+    }
+    return true;
+  }
+
+  // ---- DELETE /api/storage-locker-file?key=... ----
+  if (url.pathname === "/api/storage-locker-file" && req.method === "DELETE") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!r2.isR2Configured()) {
+      return sendJSON(res, 503, { error: "File uploads aren't set up on this server yet." }) || true;
+    }
+    const fileKey = url.searchParams.get("key") || "";
+    if (!fileKey.startsWith(`storage-locker/${user.id}/`)) {
+      return sendJSON(res, 403, { error: "Not your file." }) || true;
+    }
+    r2
+      .deleteFromR2(fileKey)
+      .then(() => sendJSON(res, 200, { ok: true }))
+      .catch((err) => sendJSON(res, 500, { error: err.message }));
+    return true;
+  }
+
+  return false;
+}
+
+function serveStaticFile(res, pathname) {
+  const decoded = decodeURIComponent(pathname);
+  const requestedPath = decoded === "/" ? "/welcome.html" : decoded;
+
+  // Defense in depth, on top of the path-traversal check below: never
+  // serve anything under server/ (where the real .env with the API key
+  // lives) or any dotfile/dot-directory, whether or not ".." is involved.
+  const segments = requestedPath.split("/").filter(Boolean);
+  if (segments[0] === "server" || segments.some((s) => s.startsWith("."))) {
+    return false;
+  }
+
+  const resolved = path.normalize(path.join(STATIC_ROOT, requestedPath));
+  const relative = path.relative(STATIC_ROOT, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return false;
+  }
+
+  if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+    return false;
+  }
+
+  const ext = path.extname(resolved).toLowerCase();
+  res.writeHead(200, { "content-type": MIME_TYPES[ext] || "application/octet-stream" });
+  fs.createReadStream(resolved).pipe(res);
+  return true;
+}
+
+const server = http.createServer((req, res) => {
+  // vocab.html is opened as a plain file (origin "null"), so this needs
+  // to allow any origin to call it. It only ever runs on localhost.
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  if (url.pathname.startsWith("/api/") && handleApiRoute(req, res, url)) {
+    return;
+  }
+
+  // Every route below that calls Claude spends the owner's API credit, so
+  // they're logged-in users only — otherwise anyone who finds the site's
+  // URL could call them directly with no account. Pages' own fetches are
+  // same-origin, so the session cookie is sent automatically.
+  if (AI_ROUTES.has(url.pathname) && !getSessionUser(req)) {
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Please log in to use this feature." }));
+    return;
+  }
+
+  if (url.pathname === "/lookup" && req.method === "GET") {
+    const word = url.searchParams.get("word");
+    const fromLang = url.searchParams.get("from");
+    const toLang = url.searchParams.get("to");
+
+    if (!word || !fromLang || !toLang) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing word, from, or to query param." }));
+      return;
+    }
+
+    console.log(`Looking up "${word}" (${fromLang} -> ${toLang})...`);
+
+    callClaude(word, fromLang, toLang)
+      .then((result) => {
+        console.log("  ->", JSON.stringify(result));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+      })
+      .catch((err) => {
+        console.error(err.message);
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+    return;
+  }
+
+  if (url.pathname === "/lookup-kanji" && req.method === "GET") {
+    const kanji = url.searchParams.get("kanji");
+    const context = url.searchParams.get("context") || "";
+
+    if (!kanji) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing kanji query param." }));
+      return;
+    }
+
+    console.log(`Looking up kanji "${kanji}"...`);
+
+    callClaudeForKanjiLookup(kanji, context)
+      .then((result) => {
+        console.log("  ->", JSON.stringify(result));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+      })
+      .catch((err) => {
+        console.error(err.message);
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+    return;
+  }
+
+  // POST (not GET) so the full passage can be sent as a JSON body instead
+  // of a URL query string — long passages (especially Japanese, which
+  // balloons under percent-encoding) used to blow past Node's ~16KB
+  // request-line limit and fail with a 431.
+  if (url.pathname === "/explain-grammar" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // A whole passage plus a phrase — generous headroom, same ballpark
+      // as the other passage-sized POST endpoints below.
+      if (bodyBytes > 2 * 1024 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { phrase, context } = parsed;
+      if (!phrase) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing phrase." }));
+        return;
+      }
+
+      console.log(`Explaining grammar for "${phrase}"...`);
+
+      callClaudeForGrammarExplain(phrase, context || "")
+        .then((result) => {
+          console.log("  ->", JSON.stringify(result));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    req.on("error", (err) => {
+      console.error(err.message);
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-examples" && req.method === "GET") {
+    const word = url.searchParams.get("word");
+    const language = url.searchParams.get("language") || "es";
+    const meaning = url.searchParams.get("meaning") || "";
+
+    if (!word) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing word query param." }));
+      return;
+    }
+
+    console.log(`Generating example sentences for "${word}" (${language})...`);
+
+    callClaudeForExampleSentences(word, language, meaning)
+      .then((result) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+      })
+      .catch((err) => {
+        console.error(err.message);
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+    return;
+  }
+
+  if (url.pathname === "/check-example-sentence" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // One example sentence — nowhere near this needs to be, generous
+      // headroom same as the other small POST endpoints.
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { text, language, patternContext } = parsed;
+      if (!text || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing text or language." }));
+        return;
+      }
+
+      console.log(`Checking example sentence (${language}): "${text}"...`);
+
+      callClaudeForExampleCheck(text, language, patternContext)
+        .then((result) => {
+          console.log("  ->", JSON.stringify(result));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-conjugation-sentence" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // One request's worth of a verb/tense/person + a short avoid-list
+      // of previous sentences — generous headroom, same as other small
+      // POST endpoints.
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { language, infinitive, english, tenseLabel, personLabel, avoidSentences } = parsed;
+      if (!language || !infinitive || !tenseLabel || !personLabel) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing language, infinitive, tenseLabel, or personLabel." }));
+        return;
+      }
+
+      console.log(`Generating conjugation sentence (${language}): ${infinitive}, ${tenseLabel}, ${personLabel}...`);
+
+      callClaudeForGenerateConjugationSentence(language, infinitive, english || "", tenseLabel, personLabel, avoidSentences)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-ja-conjugation-sentence" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { kanji, reading, meaning, formLabel, avoidSentences } = parsed;
+      if (!kanji || !reading || !formLabel) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing kanji, reading, or formLabel." }));
+        return;
+      }
+
+      console.log(`Generating JA conjugation sentence: ${kanji} (${reading}), ${formLabel}...`);
+
+      callClaudeForGenerateJaConjugationSentence(kanji, reading, meaning || "", formLabel, avoidSentences)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-conjugation-sentences-batch" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // A whole test's worth of items (up to 30) plus a short avoid-list
+      // — still small text, generous headroom same as the other POST
+      // endpoints.
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { language, items, avoidSentences } = parsed;
+      if (!language || !Array.isArray(items) || !items.length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing language or a non-empty items array." }));
+        return;
+      }
+      if (items.length > 30) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Too many items in one batch (max 30)." }));
+        return;
+      }
+      const badItem = items.find((item) => !item || !item.infinitive || !item.tenseLabel || !item.personLabel);
+      if (badItem) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Every item needs infinitive, tenseLabel, and personLabel." }));
+        return;
+      }
+
+      console.log(`Generating a batch of ${items.length} conjugation sentences (${language})...`);
+
+      callClaudeForGenerateConjugationSentencesBatch(language, items, avoidSentences)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-english-practice-sentences-batch" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { items, avoidSentences } = parsed;
+      const language = parsed.language || "es";
+      if (!Array.isArray(items) || !items.length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing a non-empty items array." }));
+        return;
+      }
+      if (items.length > 30) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Too many items in one batch (max 30)." }));
+        return;
+      }
+      const badItem = items.find(
+        (item) => !item || (item.kanji ? !item.formLabel : !item.infinitive || !item.tenseLabel || !item.personLabel)
+      );
+      if (badItem) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({ error: "Every item needs either (kanji, formLabel) or (infinitive, tenseLabel, personLabel)." })
+        );
+        return;
+      }
+
+      console.log(`Generating a batch of ${items.length} English practice sentences (${language})...`);
+
+      callClaudeForGenerateEnglishPracticeSentencesBatch(language, items, avoidSentences)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/translate-practice-sentences-batch" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { items } = parsed;
+      const language = parsed.language || "es";
+      if (!Array.isArray(items) || !items.length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing a non-empty items array." }));
+        return;
+      }
+      if (items.length > 30) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Too many items in one batch (max 30)." }));
+        return;
+      }
+      const badItem = items.find(
+        (item) =>
+          !item ||
+          !item.englishSentence ||
+          (item.kanji ? !item.formLabel : !item.infinitive || !item.tenseLabel || !item.personLabel)
+      );
+      if (badItem) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "Every item needs englishSentence plus either (kanji, formLabel) or (infinitive, tenseLabel, personLabel).",
+          })
+        );
+        return;
+      }
+
+      console.log(`Translating a batch of ${items.length} practice sentences to ${LANGUAGE_NAMES[language] || language}...`);
+
+      callClaudeForTranslatePracticeSentencesBatch(language, items)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-ja-conjugation-sentences-batch" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { items, avoidSentences } = parsed;
+      if (!Array.isArray(items) || !items.length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing a non-empty items array." }));
+        return;
+      }
+      if (items.length > 30) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Too many items in one batch (max 30)." }));
+        return;
+      }
+      const badItem = items.find((item) => !item || !item.kanji || !item.reading || !item.formLabel);
+      if (badItem) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Every item needs kanji, reading, and formLabel." }));
+        return;
+      }
+
+      console.log(`Generating a batch of ${items.length} Japanese conjugation sentences...`);
+
+      callClaudeForGenerateJaConjugationSentencesBatch(items, avoidSentences)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/check-conjugation-sentence" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { answerLanguage, referenceSentence, expectedVerbForm, userAnswer } = parsed;
+      if (!answerLanguage || !referenceSentence || !expectedVerbForm || !userAnswer) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing answerLanguage, referenceSentence, expectedVerbForm, or userAnswer." }));
+        return;
+      }
+
+      console.log(`Checking conjugation sentence (${answerLanguage}): "${userAnswer}"...`);
+
+      callClaudeForCheckConjugationSentence(answerLanguage, referenceSentence, expectedVerbForm, userAnswer)
+        .then((result) => {
+          console.log("  ->", JSON.stringify(result));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/classify-grammar-point" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { header, explanation, examples, language, structureTemplate } = parsed;
+      if (!header || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing header or language." }));
+        return;
+      }
+
+      console.log(`Classifying grammar point "${header}" (${language})...`);
+
+      callClaudeForClassifyGrammarPoint(header, explanation, examples, language, structureTemplate)
+        .then((result) => {
+          console.log("  ->", JSON.stringify(result));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/detect-conjugation-structure" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { name, exampleTL, exampleEN, structureTemplate, language } = parsed;
+      if (!name || !structureTemplate || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing name, structureTemplate, or language." }));
+        return;
+      }
+
+      console.log(`Detecting conjugation structure "${structureTemplate}" (${language})...`);
+
+      callClaudeForDetectConjugationStructure(name, exampleTL, exampleEN, structureTemplate, language)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-conjugation-examples" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { name, structureTemplate, formationRule, exampleTL, exampleEN, language, avoidTargets, count } = parsed;
+      if (!name || !structureTemplate || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing name, structureTemplate, or language." }));
+        return;
+      }
+
+      console.log(`Generating ${count || 3} more examples for "${name}" (${language})...`);
+
+      callClaudeForGenerateConjugationExamples(name, structureTemplate, formationRule, exampleTL, exampleEN, language, avoidTargets, count)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-conjugation-practice" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { name, structureTemplate, formationRule, exampleTL, exampleEN, language, style, avoid, count } = parsed;
+      if (!name || !structureTemplate || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing name, structureTemplate, or language." }));
+        return;
+      }
+
+      console.log(`Generating ${count || 5} "${style}" practice items for "${name}" (${language})...`);
+
+      callClaudeForGenerateConjugationPractice(name, structureTemplate, formationRule, exampleTL, exampleEN, language, style, avoid, count)
+        .then((result) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-card-practice" && req.method === "POST") {
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 512 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { header, explanation, label, examples, language, excludeSentences } = parsed;
+      if (!header || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing header or language." }));
+        return;
+      }
+
+      console.log(`Generating practice for "${header}" (${language})...`);
+
+      callClaudeForCardPractice(header, explanation, label, examples, language, excludeSentences)
+        .then((result) => {
+          const count = (result && result.items && result.items.length) || 0;
+          console.log(`  -> ${count} item(s)`);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/check-conjugation" && req.method === "GET") {
+    const infinitive = url.searchParams.get("infinitive");
+    const tense = url.searchParams.get("tense");
+    const person = url.searchParams.get("person");
+    const expected = url.searchParams.get("expected");
+    const userAnswer = url.searchParams.get("userAnswer");
+
+    if (!infinitive || !tense || !person || !expected || userAnswer === null) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing infinitive, tense, person, expected, or userAnswer." }));
+      return;
+    }
+
+    console.log(`Checking "${userAnswer}" against "${expected}" (${infinitive}, ${tense}, ${person})...`);
+
+    callClaudeForConjugationCheck(infinitive, tense, person, expected, userAnswer)
+      .then((result) => {
+        console.log("  ->", JSON.stringify(result));
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(result));
+      })
+      .catch((err) => {
+        console.error(err.message);
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      });
+    return;
+  }
+
+  if (url.pathname === "/extract-text" && req.method === "POST") {
+    // Buffer chunks, decode once at the end (not `rawBody += chunk`) —
+    // see the matching comment on callClaudeJSON's response reader for
+    // why: stringifying each chunk separately can split and corrupt a
+    // multi-byte UTF-8 character.
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // Screenshots can be a few MB once base64-encoded — bail out well
+      // before anything unreasonable rather than buffering forever.
+      if (bodyBytes > 15 * 1024 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { image, mediaType } = parsed;
+      if (!image || !mediaType) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing image or mediaType." }));
+        return;
+      }
+
+      console.log("Extracting text from an uploaded screenshot...");
+
+      callClaudeVisionExtract(image, mediaType)
+        .then((result) => {
+          console.log(`  -> extracted ${result.text.length} characters`);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/check-writing-grammar" && req.method === "POST") {
+    // Buffer chunks, decode once — see the comment on /extract-text's
+    // reader above (a Japanese entry makes this bug easy to hit).
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // A journal entry is plain text — generous headroom, nowhere near
+      // an actually unreasonable entry length.
+      if (bodyBytes > 2 * 1024 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { text, language } = parsed;
+      if (!text || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing text or language." }));
+        return;
+      }
+
+      console.log(`Grammar-checking a Writing entry (${language}, ${text.length} chars)...`);
+
+      callClaudeForWritingGrammarCheck(text, language)
+        .then((result) => {
+          const changed = !!(result && result.correctedText && result.correctedText !== text);
+          console.log(`  -> corrected text ${changed ? "differs from" : "matches"} the original`);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/generate-grammar-practice" && req.method === "POST") {
+    // Buffer chunks, decode once — see the comment on /extract-text's
+    // reader above.
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      if (bodyBytes > 200 * 1024) req.destroy(); // just a concept key + a short exclude list
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { concept, language, excludeWords } = parsed;
+      if (!concept || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing concept or language." }));
+        return;
+      }
+
+      console.log(`Generating grammar practice (${concept}, ${language})...`);
+
+      callClaudeForGrammarPractice(concept, language, excludeWords)
+        .then((result) => {
+          const count = (result && result.pairs && result.pairs.length) || 0;
+          console.log(`  -> ${count} practice pair(s)`);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if (url.pathname === "/extract-vocab-list" && req.method === "POST") {
+    // Buffer chunks, decode once — see the comment on /extract-text's
+    // reader above.
+    const bodyChunks = [];
+    let bodyBytes = 0;
+    req.on("data", (chunk) => {
+      bodyChunks.push(chunk);
+      bodyBytes += chunk.length;
+      // A pasted list is plain text, not an image — this is generous
+      // headroom (a couple MB of text is an enormous list) well short
+      // of anything unreasonable.
+      if (bodyBytes > 2 * 1024 * 1024) req.destroy();
+    });
+    req.on("end", () => {
+      const rawBody = Buffer.concat(bodyChunks).toString("utf8");
+      let parsed;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON body." }));
+        return;
+      }
+
+      const { text, language } = parsed;
+      if (!text || !language) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing text or language." }));
+        return;
+      }
+
+      console.log(`Extracting vocab list (${language}, ${text.length} chars)...`);
+
+      callClaudeForVocabListExtract(text, language)
+        .then((result) => {
+          const count = (result && result.words && result.words.length) || 0;
+          console.log(`  -> extracted ${count} pairs`);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err) => {
+          console.error(err.message);
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        });
+    });
+    return;
+  }
+
+  if ((req.method === "GET" || req.method === "HEAD") && serveStaticFile(res, url.pathname)) {
+    return;
+  }
+
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+});
+
+// First-boot bootstrap: creates Mei's own account automatically so
+// there's a way in at all before any admin UI exists to use. Only
+// fires when the users table is completely empty, so it's a one-time
+// thing per database — safe to leave the env vars set permanently.
+function bootstrapAdminAccount() {
+  if (db.anyUsersExist()) return;
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.warn(
+      "⚠️  No accounts exist yet, and ADMIN_EMAIL/ADMIN_PASSWORD aren't set — nobody can log in. " +
+        "Set both env vars and restart the server to create the first (admin) account."
+    );
+    return;
+  }
+  db.createUser(email, password, true);
+  console.log(`Created admin account for ${email}.`);
+}
+
+// Full-database backups: one immediately on every boot (so a snapshot
+// always exists right after a deploy, before anything can go wrong),
+// then again on a fixed interval for as long as the process stays up.
+// See db.js's backupDatabase() for how this stays safe to run while
+// the live database is in active use.
+const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
+
+function runScheduledBackup() {
+  const dest = db.backupDatabase();
+  if (dest) console.log(`Database backup saved: ${dest}`);
+}
+
+server.listen(PORT, () => {
+  if (!API_KEY) {
+    console.warn("⚠️  ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.");
+  }
+  bootstrapAdminAccount();
+  runScheduledBackup();
+  setInterval(runScheduledBackup, BACKUP_INTERVAL_MS);
+  console.log(`Dictionary lookup server running at http://localhost:${PORT}`);
+});

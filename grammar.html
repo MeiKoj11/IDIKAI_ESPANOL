@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Grammar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fahkwang:wght@400;500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/idikai-refresh.css" />
+</head>
+<body>
+  <div id="app-topbar" class="app-topbar">
+    <button type="button" id="topbar-hamburger" class="topbar-hamburger" aria-label="Menu" aria-haspopup="true">
+      <span></span><span></span><span></span>
+    </button>
+    <span id="topbar-lang-label" class="topbar-lang-label"></span>
+    <div id="topbar-menu" class="topbar-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="changeLanguageHeading">Change language</div>
+      <button type="button" class="topbar-lang-option" data-lang="es" data-immersion-key="langNameEs">Spanish</button>
+      <button type="button" class="topbar-lang-option" data-lang="ja" data-immersion-key="langNameJa">Japanese</button>
+      <button type="button" class="topbar-lang-option" data-lang="fr" data-immersion-key="langNameFr">French</button>
+    </div>
+    <button type="button" id="topbar-notifications" class="topbar-notifications" aria-label="Notifications" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2"></rect><path d="M3 6.5l9 6.5 9-6.5"></path></svg>
+    </button>
+    <!-- A quick-glance to-do list — just a small icon here next to
+         Notifications, opening the same panel that used to float over
+         the page as a big red button. -->
+    <button type="button" id="hub-todo-toggle" class="topbar-todo" aria-label="To-do list" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"></rect><path d="M8 12l3 3 5-6"></path></svg>
+      <span id="hub-todo-toggle-count" class="hub-todo-toggle-count" hidden></span>
+    </button>
+    <a href="welcome.html" id="topbar-home" class="topbar-home" aria-label="Language home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-7 9 7"></path><path d="M5 10v10h14V10"></path></svg>
+    </a>
+    <div id="topbar-notifications-menu" class="topbar-menu topbar-notifications-menu" hidden>
+      <div class="topbar-menu-heading" data-immersion-key="notificationsHeading">Notifications</div>
+      <p class="topbar-notifications-empty" data-immersion-key="notificationsEmpty">Coming soon — once a teacher connection exists, updates will show up here.</p>
+    </div>
+    <div id="hub-todo-panel" class="hub-todo-panel" hidden>
+      <div id="hub-todo-header" class="hub-todo-header">
+        <span class="hub-todo-title" data-immersion-key="todoTitle">To-do list</span>
+        <button type="button" id="hub-todo-close" class="hub-todo-close" aria-label="Close">×</button>
+      </div>
+      <form id="hub-todo-add-form" class="hub-todo-add-form">
+        <input type="text" id="hub-todo-add-input" placeholder="Add a task…" autocomplete="off" data-immersion-key="todoAddPlaceholder" />
+        <select id="hub-todo-folder-select" class="hub-todo-folder-select" aria-label="Folder">
+          <option value="" data-immersion-key="todoNoFolder">No folder</option>
+        </select>
+        <button type="submit" data-immersion-key="todoAddButton">Add</button>
+      </form>
+      <div id="hub-todo-groups" class="hub-todo-groups"></div>
+      <label class="hub-todo-show-completed">
+        <input type="checkbox" id="hub-todo-show-completed" />
+        <span data-immersion-key="todoShowCompleted">Show completed</span>
+      </label>
+    </div>
+  </div>
+  <div id="app-tab-strip" class="app-tab-strip">
+    <div id="app-tab-strip-tabs" class="app-tab-strip-tabs"></div>
+    <div class="app-tab-strip-add">
+      <button type="button" id="app-tab-plus" class="tab-bar-plus-btn" title="Open another section in a new tab">+</button>
+      <div id="app-tab-picker-panel" class="app-tab-picker-panel" hidden>
+        <select id="app-tab-section-select">
+          <option value="" disabled selected data-immersion-key="tabPickerSectionPlaceholder">Which section?</option>
+          <option value="vocab" data-immersion-key="sectionVocab">Vocab Bank</option>
+          <option value="grammar" data-immersion-key="sectionGrammar">Grammar</option>
+          <option value="writing" data-immersion-key="sectionWriting">Writing</option>
+          <option value="speaking" data-immersion-key="sectionSpeaking">Speaking</option>
+          <option value="reading" data-immersion-key="sectionReading">Reading</option>
+          <option value="personal-hub" data-immersion-key="sectionPersonalHub">Main Hub</option>
+          <option value="listening" data-immersion-key="sectionListening">Listening</option>
+        </select>
+        <select id="app-tab-unit-select" hidden>
+          <option value="" disabled selected data-immersion-key="tabPickerUnitPlaceholder">Which one?</option>
+        </select>
+        <button type="button" id="app-tab-open-btn" class="secondary" hidden data-immersion-key="tabPickerOpen">Open</button>
+        <button type="button" id="app-tab-picker-cancel" class="secondary" data-immersion-key="tabPickerCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <main>
+    <div class="pagehead" id="grammar-header">
+      <div class="row-head">
+        <div class="grow">
+          <a href="index.html" class="back-link" id="grammar-back-link" data-immersion-key="backPlain">&larr; Back</a>
+          <div class="title-with-howto">
+            <h1 class="page-title" id="grammar-heading" data-immersion-key="sectionGrammar">Grammar</h1>
+            <button type="button" class="howto-btn" id="grammar-howto-btn" data-howto-trigger="grammar-howto-overlay" aria-haspopup="dialog" data-immersion-key="howtoButton">How to use</button>
+          </div>
+          <div class="meta-row">
+            <span class="dot"></span>
+            <span class="meta-text" id="grammar-meta-text"></span>
+          </div>
+        </div>
+        <button type="button" class="btn" id="grammar-new-section-btn" data-immersion-key="newSectionButton">New section</button>
+      </div>
+    </div>
+    <div class="howto-overlay" id="grammar-howto-overlay" role="dialog" aria-modal="true" aria-labelledby="grammar-howto-title" hidden>
+      <div class="howto-modal">
+        <div class="howto-modal-head">
+          <h2 class="howto-modal-title" id="grammar-howto-title" data-immersion-key="howtoModalTitle">How to use this page</h2>
+          <button type="button" class="howto-modal-close" aria-label="Close" data-howto-close>&times;</button>
+        </div>
+        <div class="howto-modal-body">
+          <p data-immersion-key="howtoBodyGrammar1">At some point a textbook is needed to learn the basics of grammar. Fluency builds up through repetition, but before you get a feel for the language, some framework is necessary.</p>
+          <p data-immersion-key="howtoBodyGrammar2">Some examples are already given, but you're encouraged to create your own notes for separate grammar points. When a grammar point comes up often enough for AI to recognise it, a test can be generated for extra practice.</p>
+        </div>
+      </div>
+    </div>
+    <div class="grid-folders" id="grammar-theme-list" style="margin-top:22px"></div>
+  </main>
+  <script src="js/topbar.js"></script>
+  <script src="js/immersion.js"></script>
+  <script src="js/howto.js"></script>
+  <script src="js/app-tabs.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/hub-tasks.js"></script>
+  <script src="js/translate.js"></script>
+  <script src="js/grammar-concepts.js"></script>
+  <script src="js/grammar-app.js"></script>
+</body>
+</html>

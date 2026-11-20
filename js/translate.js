@@ -1,0 +1,852 @@
+/*
+  translate.js
+  ------------
+  Optional dictionary lookup, used only when you leave one side of a
+  word blank.
+
+  Primary source: a small local backend (see /server) that calls the
+  Claude API — a real dictionary-quality lookup, including gender and
+  article for Spanish nouns, and always a clean infinitive for verbs
+  (no more "to eat" -> "para comer"). Needs the server running
+  (node server.js) and an internet connection.
+
+  Fallback: if the backend isn't running, or you're offline, this
+  quietly falls back to MyMemory (the original free translation-memory
+  API — no signup, works directly from the browser, but lower quality
+  and no gender info). Nothing breaks either way — if both fail, the
+  field is just left for you to fill in by hand.
+
+  Either path returns the same shape from lookupTranslation():
+    { translation, gender, article, plural, source }
+  gender/article/plural are null/false unless the backend supplied
+  them (MyMemory never does).
+*/
+
+// Opened as a local file (file://), there's no server to be same-origin
+// with, so keep talking to localhost:3001 as before. Once served BY that
+// same server (a deployed link, or visiting localhost:3001 directly),
+// window.location.origin already points at it, so relative paths ("")
+// just work — no separate static host and no CORS setup needed.
+const API_BASE = window.location.protocol === "file:" ? "http://localhost:3001" : "";
+
+const BACKEND_URL = `${API_BASE}/lookup`;
+
+async function lookupViaBackend(word, fromLang, toLang) {
+  try {
+    const url = `${BACKEND_URL}?word=${encodeURIComponent(word)}&from=${fromLang}&to=${toLang}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data.translation) return null;
+    return {
+      translation: data.translation,
+      gender: data.gender || null,
+      article: data.article || null,
+      plural: !!data.plural,
+      furigana: data.furigana || null,
+      conjugationInfo: data.conjugationInfo || null,
+      partOfSpeech: data.partOfSpeech || null,
+      verbClass: data.verbClass || null,
+      verbType: data.verbType || null,
+      source: "claude",
+    };
+  } catch (e) {
+    // Server not running, or offline — fall back to MyMemory below.
+    return null;
+  }
+}
+
+async function lookupViaMyMemory(word, fromLang, toLang) {
+  const langpair = `${fromLang}|${toLang}`;
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=${langpair}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data && data.responseData && data.responseData.translatedText;
+    if (!result) return null;
+    // If it just handed back the same word, treat that as "no real match".
+    if (result.toLowerCase().trim() === word.toLowerCase().trim()) return null;
+    return { translation: result, gender: null, article: null, plural: false, furigana: null, conjugationInfo: null, partOfSpeech: null, verbClass: null, verbType: null, source: "mymemory" };
+  } catch (e) {
+    console.warn("MyMemory lookup failed (probably offline):", e);
+    return null;
+  }
+}
+
+async function lookupTranslation(word, fromLang, toLang) {
+  const backendResult = await lookupViaBackend(word, fromLang, toLang);
+  const result = backendResult || (await lookupViaMyMemory(word, fromLang, toLang));
+  return applyMeaningOverrides(result, word, fromLang, toLang);
+}
+
+// The learner's own corrected meanings (Storage.setMeaningOverride) always
+// beat the AI's — for the word itself, and for its infinitive's gloss.
+function applyMeaningOverrides(result, word, fromLang, toLang) {
+  if (toLang !== "en" || typeof Storage === "undefined" || !Storage.getMeaningOverride) return result;
+  const own = Storage.getMeaningOverride(fromLang, word);
+  if (!result && !own) return result;
+  const out = result ? { ...result } : { translation: own, gender: null, article: null, plural: false, furigana: null, conjugationInfo: null, partOfSpeech: null, verbClass: null, verbType: null, source: "override" };
+  if (own) out.translation = own;
+  if (out.conjugationInfo && out.conjugationInfo.infinitive) {
+    const infOverride = Storage.getMeaningOverride(fromLang, out.conjugationInfo.infinitive);
+    if (infOverride) out.conjugationInfo = { ...out.conjugationInfo, infinitiveEnglish: infOverride };
+  }
+  return out;
+}
+
+// Used by the verb-conjugation quiz when the answer doesn't exactly
+// match locally — asks Claude for a second opinion (accepts regional
+// variants, explains real mistakes) rather than a hard string match.
+// Returns { correct, feedback } or null if the server isn't reachable.
+async function checkConjugation(infinitive, tense, person, expected, userAnswer) {
+  try {
+    const params = new URLSearchParams({ infinitive, tense, person, expected, userAnswer });
+    const res = await fetch(`${API_BASE}/check-conjugation?${params.toString()}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (typeof data.correct !== "boolean") return null;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Sends a screenshot to the backend and gets back the transcribed text,
+// for the Reading bubble's "upload an image instead of typing/pasting"
+// option. Always returns { text, error } — text is null on failure, and
+// error is a human-readable reason (also logged to the console) so a
+// failure is actually diagnosable instead of a silent dead end.
+async function extractTextFromImage(base64Image, mediaType) {
+  try {
+    const res = await fetch(`${API_BASE}/extract-text`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ image: base64Image, mediaType }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("extract-text failed:", reason);
+      return { text: null, error: reason };
+    }
+    if (!data || !data.text) {
+      console.error("extract-text: unexpected response shape", data);
+      return { text: null, error: "The server didn't return any text." };
+    }
+    return { text: data.text, error: null };
+  } catch (e) {
+    console.error("extract-text: could not reach the server", e);
+    return { text: null, error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?" };
+  }
+}
+
+// Used by the Grammar bubble's collapsed "AI hint" and the always-shown
+// reference translation — never used to auto-fill the notes/tags fields,
+// those stay written by hand. Returns { translation, structure, explanation }
+// or null if the server isn't reachable. "structure" is a short formulaic
+// label (e.g. "como si + pluperfect subjunctive"); "explanation" is the
+// fuller paragraph.
+async function explainGrammar(phrase, context) {
+  try {
+    // POST with a JSON body (not a GET query string) — a whole passage
+    // as context used to blow past the URL length limit on long passages.
+    const res = await fetch(`${API_BASE}/explain-grammar`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ phrase, context: context || "" }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data.translation) return null;
+    return {
+      translation: data.translation,
+      furigana: data.furigana || "",
+      dictionaryForm: data.dictionaryForm || "",
+      dictionaryFormEnglish: data.dictionaryFormEnglish || "",
+      structure: data.structure || "",
+      explanation: data.explanation || "",
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// Powers the "Generate 3 examples" box on the Reading bubble's vocab-add
+// panel and word-lookup panel — 3 short sentences that each use the word
+// EXACTLY as given (same conjugation/form, not re-tensed), plus an
+// English translation of each. Returns { examples, error } — examples is
+// null on failure, mirroring the other lookup helpers in this file.
+async function generateExampleSentences(word, language, meaning) {
+  try {
+    const params = new URLSearchParams({ word, language: language || "es", meaning: meaning || "" });
+    const res = await fetch(`${API_BASE}/generate-examples?${params.toString()}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-examples failed:", reason);
+      return { examples: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.examples) || data.examples.length === 0) {
+      console.error("generate-examples: unexpected response shape", data);
+      return { examples: null, error: "The server didn't return any example sentences." };
+    }
+    return { examples: data.examples, error: null };
+  } catch (e) {
+    console.error("generate-examples: could not reach the server", e);
+    return {
+      examples: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Used by the Japanese Reading bubble's click-any-kanji lookup. Returns
+// { word, furigana, meaning, error } — "word" is the dictionary form of
+// the compound/word the clicked kanji is actually part of (identified
+// using the surrounding sentence), not just the isolated character.
+// "error" is null on success and a human-readable reason on failure
+// (also logged to the console) so a failure is diagnosable instead of a
+// generic "check the server" dead end — mirrors extractTextFromImage.
+async function lookupKanji(kanji, context) {
+  try {
+    const params = new URLSearchParams({ kanji, context: context || "" });
+    const res = await fetch(`${API_BASE}/lookup-kanji?${params.toString()}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("lookup-kanji failed:", reason);
+      return { word: null, furigana: "", meaning: "", error: reason };
+    }
+    if (!data || !data.word) {
+      console.error("lookup-kanji: unexpected response shape", data);
+      return { word: null, furigana: "", meaning: "", kanjiMeaning: null, error: "The server didn't return a result for this kanji." };
+    }
+    return {
+      word: data.word,
+      furigana: data.furigana || "",
+      meaning: data.meaning || "",
+      kanjiMeaning: data.kanjiMeaning || null,
+      error: null,
+    };
+  } catch (e) {
+    console.error("lookup-kanji: could not reach the server", e);
+    return {
+      word: null,
+      furigana: "",
+      meaning: "",
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Used by the Vocab Bank's "Import a vocab list" bulk-add option.
+// Sends a whole pasted block of text and gets back a batch of
+// { targetLang, english, furigana } pairs to review before saving.
+// Always returns { words, error } — words is null on failure, error is
+// a human-readable reason (also logged), mirroring extractTextFromImage.
+async function extractVocabList(text, language) {
+  try {
+    const res = await fetch(`${API_BASE}/extract-vocab-list`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, language }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("extract-vocab-list failed:", reason);
+      return { words: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.words)) {
+      console.error("extract-vocab-list: unexpected response shape", data);
+      return { words: null, error: "The server didn't return a usable result." };
+    }
+    return { words: data.words, error: null };
+  } catch (e) {
+    console.error("extract-vocab-list: could not reach the server", e);
+    return {
+      words: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Used by the Writing bubble's "Grammar check" button — sends a whole
+// saved entry and gets back one corrected version of the whole thing.
+// Splitting into sentences and finding exactly what changed happens
+// client-side (writing-app.js's buildGrammarSentenceCheck), diffing this
+// against the learner's own saved text — never against anything echoed
+// back here. Distinct from Vocab check (which only resolves <bracketed>
+// words via a plain dictionary lookup) and (like the v2 redesign) never
+// touches the entry's saved text itself. Always returns
+// { correctedText, error } — correctedText is null on failure, error is
+// a human-readable reason (also logged), mirroring extractVocabList.
+async function checkWritingGrammar(text, language) {
+  try {
+    const res = await fetch(`${API_BASE}/check-writing-grammar`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, language }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("check-writing-grammar failed:", reason);
+      return { correctedText: null, error: reason };
+    }
+    if (!data || typeof data.correctedText !== "string") {
+      console.error("check-writing-grammar: unexpected response shape", data);
+      return { correctedText: null, error: "The server didn't return a usable result." };
+    }
+    return { correctedText: data.correctedText, error: null };
+  } catch (e) {
+    console.error("check-writing-grammar: could not reach the server", e);
+    return {
+      correctedText: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers the light, per-sentence check on a Grammar structure card's
+// example sentences — patternContext (optional) is the card's own
+// header + explanation, so the check can flag an example that's
+// grammatical but doesn't actually demonstrate the pattern, not just
+// catch typos. Always returns { isCorrect, corrected, note, error }.
+async function checkExampleSentence(text, language, patternContext) {
+  try {
+    const res = await fetch(`${API_BASE}/check-example-sentence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, language, patternContext: patternContext || "" }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("check-example-sentence failed:", reason);
+      return { isCorrect: null, corrected: null, note: null, error: reason };
+    }
+    if (!data || typeof data.isCorrect !== "boolean" || typeof data.corrected !== "string") {
+      console.error("check-example-sentence: unexpected response shape", data);
+      return { isCorrect: null, corrected: null, note: null, error: "The server didn't return a usable result." };
+    }
+    return { isCorrect: data.isCorrect, corrected: data.corrected, note: data.note || "", error: null };
+  } catch (e) {
+    console.error("check-example-sentence: could not reach the server", e);
+    return {
+      isCorrect: null,
+      corrected: null,
+      note: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers the "what grammar point is this?" check that runs on a
+// structure card's own header/explanation/examples (grammar-add-note.html).
+// Always returns { label, note, error }; label is null both on failure
+// AND on a legitimate "no single clear point found" result — check
+// `error` to tell the two apart.
+async function classifyGrammarPoint(header, explanation, examples, language, structureTemplate) {
+  try {
+    const res = await fetch(`${API_BASE}/classify-grammar-point`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ header, explanation, examples, language, structureTemplate: structureTemplate || "" }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("classify-grammar-point failed:", reason);
+      return { label: null, note: null, refinedStructureTemplate: null, error: reason };
+    }
+    if (!data || typeof data.note !== "string") {
+      console.error("classify-grammar-point: unexpected response shape", data);
+      return { label: null, note: null, refinedStructureTemplate: null, error: "The server didn't return a usable result." };
+    }
+    return { label: data.label || null, note: data.note, refinedStructureTemplate: data.refinedStructureTemplate || null, error: null };
+  } catch (e) {
+    console.error("classify-grammar-point: could not reach the server", e);
+    return {
+      label: null,
+      note: null,
+      refinedStructureTemplate: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers a structure card's "Test me on this" practice — only offered
+// once the card has a recognized label. Always returns { items, error };
+// items is null on failure.
+async function generateCardPractice(header, explanation, label, examples, language, excludeSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-card-practice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ header, explanation, label, examples, language, excludeSentences: excludeSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-card-practice failed:", reason);
+      return { items: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.items)) {
+      console.error("generate-card-practice: unexpected response shape", data);
+      return { items: null, error: "The server didn't return a usable result." };
+    }
+    return { items: data.items, error: null };
+  } catch (e) {
+    console.error("generate-card-practice: could not reach the server", e);
+    return {
+      items: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers a Grammar folder's "Practice this grammar point" option — only
+// called for folders tagged with a recognized concept (see
+// grammar-concepts.js). excludeWords lets a practice session avoid
+// repeating pairs it's already shown this sitting. Always returns
+// { pairs, error }; pairs is null on failure, mirroring the other
+// Translate functions.
+async function generateGrammarPractice(concept, language, excludeWords) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-grammar-practice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ concept, language, excludeWords: excludeWords || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-grammar-practice failed:", reason);
+      return { pairs: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.pairs)) {
+      console.error("generate-grammar-practice: unexpected response shape", data);
+      return { pairs: null, error: "The server didn't return a usable result." };
+    }
+    return { pairs: data.pairs, error: null };
+  } catch (e) {
+    console.error("generate-grammar-practice: could not reach the server", e);
+    return {
+      pairs: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers the "sentence mode" Conjugation Test — generates one AI
+// sentence per question (English + target-language pair, both using the
+// requested verb correctly conjugated), unlike the quick test's fully
+// local template engine. Always returns { englishSentence, targetSentence,
+// verbFormEnglish, verbFormTarget, error }; the sentence fields are null
+// on failure.
+async function generateConjugationSentence(language, infinitive, english, tenseLabel, personLabel, avoidSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-conjugation-sentence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language, infinitive, english, tenseLabel, personLabel, avoidSentences: avoidSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-conjugation-sentence failed:", reason);
+      return { englishSentence: null, targetSentence: null, verbFormEnglish: null, verbFormTarget: null, error: reason };
+    }
+    if (!data || typeof data.englishSentence !== "string" || typeof data.targetSentence !== "string") {
+      console.error("generate-conjugation-sentence: unexpected response shape", data);
+      return { englishSentence: null, targetSentence: null, verbFormEnglish: null, verbFormTarget: null, error: "The server didn't return a usable result." };
+    }
+    return {
+      englishSentence: data.englishSentence,
+      targetSentence: data.targetSentence,
+      verbFormEnglish: data.verbFormEnglish || "",
+      verbFormTarget: data.verbFormTarget || "",
+      error: null,
+    };
+  } catch (e) {
+    console.error("generate-conjugation-sentence: could not reach the server", e);
+    return {
+      englishSentence: null,
+      targetSentence: null,
+      verbFormEnglish: null,
+      verbFormTarget: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Batch version of generateConjugationSentence — generates a whole
+// test's worth of sentences (one per item in `items`) in ONE request,
+// so the sentence test can show a single "loading your test" screen up
+// front instead of a short wait before every question. Always returns
+// { sentences, error }; `sentences` is an array (one entry per input
+// item, in order, same shape as generateConjugationSentence's return
+// value minus the error field) or null on failure.
+async function generateConjugationSentencesBatch(language, items, avoidSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-conjugation-sentences-batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language, items, avoidSentences: avoidSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-conjugation-sentences-batch failed:", reason);
+      return { sentences: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.sentences) || data.sentences.length !== items.length) {
+      console.error("generate-conjugation-sentences-batch: unexpected response shape", data);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    const bad = data.sentences.find((s) => !s || typeof s.englishSentence !== "string" || typeof s.targetSentence !== "string");
+    if (bad) {
+      console.error("generate-conjugation-sentences-batch: malformed item in response", bad);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    return {
+      sentences: data.sentences.map((s) => ({
+        englishSentence: s.englishSentence,
+        targetSentence: s.targetSentence,
+        verbFormEnglish: s.verbFormEnglish || "",
+        verbFormTarget: s.verbFormTarget || "",
+      })),
+      error: null,
+    };
+  } catch (e) {
+    console.error("generate-conjugation-sentences-batch: could not reach the server", e);
+    return { sentences: null, error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?" };
+  }
+}
+
+// Powers the "self-marking" sentence test's fast first pass — writes
+// just the English prompt sentences (no translation yet), via the fast/
+// cheap model, so the whole test can appear almost immediately. Always
+// returns { sentences, error }; `sentences` is an array of
+// { englishSentence } (one per input item, in order) or null on failure.
+async function generateEnglishPracticeSentencesBatch(language, items, avoidSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-english-practice-sentences-batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language, items, avoidSentences: avoidSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-english-practice-sentences-batch failed:", reason);
+      return { sentences: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.sentences) || data.sentences.length !== items.length) {
+      console.error("generate-english-practice-sentences-batch: unexpected response shape", data);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    const bad = data.sentences.find((s) => !s || typeof s.englishSentence !== "string");
+    if (bad) {
+      console.error("generate-english-practice-sentences-batch: malformed item in response", bad);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    return { sentences: data.sentences.map((s) => ({ englishSentence: s.englishSentence })), error: null };
+  } catch (e) {
+    console.error("generate-english-practice-sentences-batch: could not reach the server", e);
+    return { sentences: null, error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?" };
+  }
+}
+
+// Powers the "self-marking" sentence test's background second pass —
+// takes the exact English sentences generateEnglishPracticeSentencesBatch
+// just wrote and translates them accurately into Spanish via the strong
+// model, becoming the answer key the learner grades their own attempt
+// against after Submit. Always returns { translations, error };
+// `translations` is an array of { targetSentence, verbFormTarget } (one
+// per input item, in order) or null on failure.
+async function translatePracticeSentencesBatch(language, items) {
+  try {
+    const res = await fetch(`${API_BASE}/translate-practice-sentences-batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ language, items }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("translate-practice-sentences-batch failed:", reason);
+      return { translations: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.translations) || data.translations.length !== items.length) {
+      console.error("translate-practice-sentences-batch: unexpected response shape", data);
+      return { translations: null, error: "The server didn't return a usable result." };
+    }
+    const bad = data.translations.find((t) => !t || typeof t.targetSentence !== "string");
+    if (bad) {
+      console.error("translate-practice-sentences-batch: malformed item in response", bad);
+      return { translations: null, error: "The server didn't return a usable result." };
+    }
+    return {
+      translations: data.translations.map((t) => ({ targetSentence: t.targetSentence, verbFormTarget: t.verbFormTarget || "" })),
+      error: null,
+    };
+  } catch (e) {
+    console.error("translate-practice-sentences-batch: could not reach the server", e);
+    return { translations: null, error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?" };
+  }
+}
+
+// Japanese counterpart of generateConjugationSentence — different
+// shape (kanji/reading/meaning + one of the 4 special forms, no tense/
+// person) so it's its own function rather than a branch of the ES/FR
+// one. Always returns { japaneseSentence, englishSentence,
+// verbFormJapanese, verbFormEnglish, error }; sentence fields are null
+// on failure. Grading still goes through the shared checkConjugationSentence
+// below — the response shape is deliberately parallel to the ES/FR one
+// (targetSentence -> japaneseSentence, verbFormTarget -> verbFormJapanese)
+// so callers can grade it the same way.
+async function generateJaConjugationSentence(kanji, reading, meaning, formLabel, avoidSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-ja-conjugation-sentence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kanji, reading, meaning, formLabel, avoidSentences: avoidSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-ja-conjugation-sentence failed:", reason);
+      return { japaneseSentence: null, englishSentence: null, verbFormJapanese: null, verbFormEnglish: null, error: reason };
+    }
+    if (!data || typeof data.japaneseSentence !== "string" || typeof data.englishSentence !== "string") {
+      console.error("generate-ja-conjugation-sentence: unexpected response shape", data);
+      return {
+        japaneseSentence: null,
+        englishSentence: null,
+        verbFormJapanese: null,
+        verbFormEnglish: null,
+        error: "The server didn't return a usable result.",
+      };
+    }
+    return {
+      japaneseSentence: data.japaneseSentence,
+      englishSentence: data.englishSentence,
+      verbFormJapanese: data.verbFormJapanese || "",
+      verbFormEnglish: data.verbFormEnglish || "",
+      error: null,
+    };
+  } catch (e) {
+    console.error("generate-ja-conjugation-sentence: could not reach the server", e);
+    return {
+      japaneseSentence: null,
+      englishSentence: null,
+      verbFormJapanese: null,
+      verbFormEnglish: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Batch version of generateJaConjugationSentence — see
+// generateConjugationSentencesBatch above for why. Always returns
+// { sentences, error }; `sentences` is an array (one entry per input
+// item, in order) or null on failure.
+async function generateJaConjugationSentencesBatch(items, avoidSentences) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-ja-conjugation-sentences-batch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items, avoidSentences: avoidSentences || [] }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-ja-conjugation-sentences-batch failed:", reason);
+      return { sentences: null, error: reason };
+    }
+    if (!data || !Array.isArray(data.sentences) || data.sentences.length !== items.length) {
+      console.error("generate-ja-conjugation-sentences-batch: unexpected response shape", data);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    const bad = data.sentences.find((s) => !s || typeof s.japaneseSentence !== "string" || typeof s.englishSentence !== "string");
+    if (bad) {
+      console.error("generate-ja-conjugation-sentences-batch: malformed item in response", bad);
+      return { sentences: null, error: "The server didn't return a usable result." };
+    }
+    return {
+      sentences: data.sentences.map((s) => ({
+        japaneseSentence: s.japaneseSentence,
+        englishSentence: s.englishSentence,
+        verbFormJapanese: s.verbFormJapanese || "",
+        verbFormEnglish: s.verbFormEnglish || "",
+      })),
+      error: null,
+    };
+  } catch (e) {
+    console.error("generate-ja-conjugation-sentences-batch: could not reach the server", e);
+    return { sentences: null, error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?" };
+  }
+}
+
+// Grades a sentence-mode answer — verb-strict, everything-else-lenient
+// per the app's design (see server.js's CHECK_CONJUGATION_SENTENCE_PROMPT).
+// Always returns { verbCorrect, corrected, note, error }; verbCorrect is
+// null on failure so callers can distinguish "wrong" from "couldn't grade".
+async function checkConjugationSentence(answerLanguage, referenceSentence, expectedVerbForm, userAnswer) {
+  try {
+    const res = await fetch(`${API_BASE}/check-conjugation-sentence`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answerLanguage, referenceSentence, expectedVerbForm, userAnswer }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("check-conjugation-sentence failed:", reason);
+      return { verbCorrect: null, corrected: null, note: null, error: reason };
+    }
+    if (!data || typeof data.verbCorrect !== "boolean" || typeof data.corrected !== "string") {
+      console.error("check-conjugation-sentence: unexpected response shape", data);
+      return { verbCorrect: null, corrected: null, note: null, error: "The server didn't return a usable result." };
+    }
+    return { verbCorrect: data.verbCorrect, corrected: data.corrected, note: data.note || null, error: null };
+  } catch (e) {
+    console.error("check-conjugation-sentence: could not reach the server", e);
+    return {
+      verbCorrect: null,
+      corrected: null,
+      note: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------
+// Custom conjugation/structure notes (Grammer_New/grammar-add-conjugation-
+// note.html — Japanese "Tenses and verb conjugations" only, for now).
+// ---------------------------------------------------------------------
+
+// "AI detect" on the Structure template box. Always returns
+// { formationRule, refinedStructureTemplate, error } — both text fields
+// are null only on a failure (see `error`), never as a valid "nothing
+// found" result (unlike classifyGrammarPoint, there's always a rule and
+// a cleaned-up template to offer once a template's been drafted).
+async function detectConjugationStructure(name, exampleTL, exampleEN, structureTemplate, language) {
+  try {
+    const res = await fetch(`${API_BASE}/detect-conjugation-structure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, exampleTL, exampleEN, structureTemplate, language }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("detect-conjugation-structure failed:", reason);
+      return { formationRule: null, refinedStructureTemplate: null, error: reason };
+    }
+    if (!data || typeof data.formationRule !== "string" || typeof data.refinedStructureTemplate !== "string") {
+      console.error("detect-conjugation-structure: unexpected response shape", data);
+      return { formationRule: null, refinedStructureTemplate: null, error: "The server didn't return a usable result." };
+    }
+    return { formationRule: data.formationRule, refinedStructureTemplate: data.refinedStructureTemplate, error: null };
+  } catch (e) {
+    console.error("detect-conjugation-structure: could not reach the server", e);
+    return {
+      formationRule: null,
+      refinedStructureTemplate: null,
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// "Generate 3 more examples" — returns { examples, error }; examples is
+// [] (never null) on a failure so callers can just .forEach it either way.
+async function generateConjugationExamples(name, structureTemplate, formationRule, exampleTL, exampleEN, language, avoidTargets, count) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-conjugation-examples`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, structureTemplate, formationRule, exampleTL, exampleEN, language, avoidTargets, count }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-conjugation-examples failed:", reason);
+      return { examples: [], error: reason };
+    }
+    if (!data || !Array.isArray(data.examples)) {
+      console.error("generate-conjugation-examples: unexpected response shape", data);
+      return { examples: [], error: "The server didn't return a usable result." };
+    }
+    return { examples: data.examples, error: null };
+  } catch (e) {
+    console.error("generate-conjugation-examples: could not reach the server", e);
+    return {
+      examples: [],
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+// Powers both "Generate quick conjugation test" (style: "word") and the
+// sentence test (style: "sentence") boxes. Returns { items, error }.
+async function generateConjugationPractice(name, structureTemplate, formationRule, exampleTL, exampleEN, language, style, avoid, count) {
+  try {
+    const res = await fetch(`${API_BASE}/generate-conjugation-practice`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, structureTemplate, formationRule, exampleTL, exampleEN, language, style, avoid, count }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const reason = (data && data.error) || `Server responded with ${res.status}.`;
+      console.error("generate-conjugation-practice failed:", reason);
+      return { items: [], error: reason };
+    }
+    if (!data || !Array.isArray(data.items)) {
+      console.error("generate-conjugation-practice: unexpected response shape", data);
+      return { items: [], error: "The server didn't return a usable result." };
+    }
+    return { items: data.items, error: null };
+  } catch (e) {
+    console.error("generate-conjugation-practice: could not reach the server", e);
+    return {
+      items: [],
+      error: "Couldn't reach the lookup server at localhost:3001 — is `node server.js` running?",
+    };
+  }
+}
+
+const Translate = {
+  lookupTranslation,
+  checkConjugation,
+  extractTextFromImage,
+  explainGrammar,
+  generateExampleSentences,
+  lookupKanji,
+  extractVocabList,
+  checkWritingGrammar,
+  checkExampleSentence,
+  classifyGrammarPoint,
+  detectConjugationStructure,
+  generateConjugationExamples,
+  generateConjugationPractice,
+  generateCardPractice,
+  generateGrammarPractice,
+  generateConjugationSentence,
+  generateConjugationSentencesBatch,
+  generateEnglishPracticeSentencesBatch,
+  translatePracticeSentencesBatch,
+  generateJaConjugationSentence,
+  generateJaConjugationSentencesBatch,
+  checkConjugationSentence,
+};
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = Translate;
+} else {
+  window.Translate = Translate;
+}
