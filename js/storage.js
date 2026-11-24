@@ -1452,6 +1452,20 @@ function updateClassNotebookPage(pageId, content) {
   return page;
 }
 
+// Non-content page fields (currently just bookLink: { itemId, page } —
+// which textbook page this notebook page goes with). Kept separate from
+// updateClassNotebookPage so a link change never touches the page text,
+// and pass bookLink: null to remove one.
+function updateClassNotebookPageMeta(pageId, updates) {
+  const pages = readJSON(STORAGE_KEYS.classNotebookPages, []);
+  const page = pages.find((p) => p.id === pageId);
+  if (!page) return null;
+  Object.assign(page, updates);
+  page.updatedAt = Date.now();
+  writeJSON(STORAGE_KEYS.classNotebookPages, pages);
+  return page;
+}
+
 // ---- Saved sentence tests ----
 // A completed, self-marked sentence-test run the learner chose to keep
 // (saving is always optional — see spanish-sentence-test-app.js's
@@ -1829,6 +1843,7 @@ const Storage = {
   getClassNotebookPages,
   addClassNotebookPage,
   updateClassNotebookPage,
+  updateClassNotebookPageMeta,
   getTasks,
   addTask,
   updateTask,

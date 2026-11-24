@@ -80,50 +80,125 @@
     <h1 id="class-notebook-heading" data-immersion-key="classNotebookHeading">Class Notebook</h1>
   </header>
   <main class="class-notebook-main">
-    <div class="notebook-toolbar" id="notebook-toolbar">
+    <div class="notebook-toolbar" id="notebook-toolbar" role="toolbar" aria-label="Formatting">
+      <button type="button" class="notebook-toolbar-btn" id="notebook-undo-btn" title="Undo" aria-label="Undo">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>
+      </button>
+      <button type="button" class="notebook-toolbar-btn" id="notebook-redo-btn" title="Redo" aria-label="Redo">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg>
+      </button>
+      <span class="notebook-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="notebook-toolbar-btn" id="notebook-size-down-btn" title="Smaller text" aria-label="Smaller text">&minus;</button>
+      <select class="notebook-size-select" id="notebook-size-select" aria-label="Text size"></select>
+      <button type="button" class="notebook-toolbar-btn" id="notebook-size-up-btn" title="Larger text" aria-label="Larger text">+</button>
+      <span class="notebook-toolbar-sep" aria-hidden="true"></span>
       <button type="button" class="notebook-toolbar-btn" id="notebook-bold-btn" data-immersion-key="notebookBoldButton" title="Bold"><b>B</b></button>
       <button type="button" class="notebook-toolbar-btn" id="notebook-underline-btn" data-immersion-key="notebookUnderlineButton" title="Underline"><u>U</u></button>
-      <button type="button" class="notebook-toolbar-btn" id="notebook-highlight-btn" data-immersion-key="notebookHighlightButton" title="Highlight">H</button>
-      <button type="button" class="notebook-toolbar-btn" id="notebook-link-btn" data-immersion-key="notebookLinkButton" title="Place a link: click here, then click where you want it in the text">&#128279;</button>
+      <button type="button" class="notebook-toolbar-btn" id="notebook-highlight-btn" data-immersion-key="notebookHighlightButton" title="Highlight"><span class="notebook-hl-sample">H</span></button>
+      <span class="notebook-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="notebook-toolbar-btn" id="notebook-link-btn" data-immersion-key="notebookLinkButton" title="Place a link: click here, then click where you want it in the text" aria-label="Place a link">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+      </button>
+      <button type="button" class="notebook-toolbar-btn notebook-toolbar-wide" id="notebook-picture-btn" title="Insert a picture where your cursor is">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/></svg>
+        <span>Picture</span>
+      </button>
+      <input type="file" id="notebook-picture-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+      <span class="notebook-toolbar-sep" aria-hidden="true"></span>
+      <button type="button" class="notebook-toolbar-btn notebook-toolbar-wide" id="notebook-textbook-btn" title="Open a textbook beside your notes" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/></svg>
+        <span>Textbook</span>
+      </button>
       <span class="notebook-toolbar-spacer"></span>
-      <button type="button" class="notebook-toolbar-action" id="notebook-new-vocab-btn" data-immersion-key="notebookNewVocabButton">New vocab</button>
+      <button type="button" class="notebook-toolbar-action notebook-toolbar-action-alt" id="notebook-new-vocab-btn" data-immersion-key="notebookNewVocabButton">New vocab</button>
       <button type="button" class="notebook-toolbar-action" id="notebook-new-grammar-btn" data-immersion-key="notebookNewGrammarButton">New grammar</button>
     </div>
-    <div class="notebook-book" id="notebook-book">
-      <div class="notebook-page notebook-page-left" id="notebook-page-left">
-        <div
-          class="notebook-page-textarea notebook-page-editable"
-          id="notebook-left-textarea"
-          contenteditable="true"
-          data-placeholder="Write your notes here…"
-        ></div>
-        <div class="notebook-page-footer notebook-page-footer-left">
-          <button type="button" id="notebook-prev-btn" class="notebook-nav-btn" data-immersion-key="notebookPrevPage" hidden>&larr; Previous page</button>
-          <span class="notebook-page-number" id="notebook-left-page-number"></span>
+
+    <div class="notebook-workarea" id="notebook-workarea">
+      <div class="notebook-book" id="notebook-book">
+        <div class="notebook-page notebook-page-left" id="notebook-page-left">
+          <div class="notebook-page-scroll">
+            <div class="notebook-page-head">
+              <span class="notebook-page-date" id="notebook-left-date"></span>
+              <button type="button" class="notebook-book-tag" id="notebook-left-booktag" hidden></button>
+            </div>
+            <div
+              class="notebook-page-editable"
+              id="notebook-left-textarea"
+              contenteditable="true"
+              data-placeholder="Write your notes here…"
+            ></div>
+          </div>
+          <div class="notebook-page-footer notebook-page-footer-left">
+            <button type="button" id="notebook-prev-btn" class="notebook-nav-btn" data-immersion-key="notebookPrevPage" hidden>&larr; Previous page</button>
+            <span class="notebook-page-number" id="notebook-left-page-number"></span>
+            <button type="button" id="notebook-next-btn-left" class="notebook-nav-btn notebook-nav-next" data-immersion-key="notebookNextPage">Next page &rarr;</button>
+          </div>
+        </div>
+        <div class="notebook-spine" aria-hidden="true"></div>
+        <div class="notebook-page notebook-page-right" id="notebook-page-right">
+          <div class="notebook-page-scroll">
+            <div class="notebook-page-head">
+              <span class="notebook-page-date" id="notebook-right-date"></span>
+              <button type="button" class="notebook-book-tag" id="notebook-right-booktag" hidden></button>
+            </div>
+            <div
+              class="notebook-page-editable"
+              id="notebook-right-textarea"
+              contenteditable="true"
+              data-placeholder="Write your notes here…"
+            ></div>
+          </div>
+          <div class="notebook-page-footer notebook-page-footer-right">
+            <button type="button" id="notebook-prev-btn-right" class="notebook-nav-btn notebook-nav-prev" data-immersion-key="notebookPrevPage">&larr; Previous page</button>
+            <span class="notebook-page-number" id="notebook-right-page-number"></span>
+            <button type="button" id="notebook-next-btn" class="notebook-nav-btn" data-immersion-key="notebookNextPage">Next page &rarr;</button>
+          </div>
         </div>
       </div>
-      <div class="notebook-spine" aria-hidden="true"></div>
-      <div class="notebook-page notebook-page-right" id="notebook-page-right">
-        <div
-          class="notebook-page-textarea notebook-page-editable"
-          id="notebook-right-textarea"
-          contenteditable="true"
-          data-placeholder="Write your notes here…"
-        ></div>
-        <div class="notebook-page-footer notebook-page-footer-right">
-          <span class="notebook-page-number" id="notebook-right-page-number"></span>
-          <button type="button" id="notebook-next-btn" class="notebook-nav-btn" data-immersion-key="notebookNextPage">Next page &rarr;</button>
+
+      <aside class="textbook-panel" id="textbook-panel" aria-label="Textbook" hidden>
+        <div class="textbook-head">
+          <div class="textbook-head-main">
+            <div class="textbook-title" id="textbook-title">Textbook</div>
+            <div class="textbook-sub">From your Storage Locker</div>
+          </div>
+          <button type="button" class="textbook-small-btn" id="textbook-change-btn">Change book</button>
+          <button type="button" class="textbook-icon-btn textbook-close-btn" id="textbook-close-btn" aria-label="Close textbook panel">&times;</button>
         </div>
-      </div>
+        <div class="textbook-view" id="textbook-view">
+          <p class="textbook-status" id="textbook-status"></p>
+          <canvas id="textbook-canvas"></canvas>
+        </div>
+        <div class="textbook-controls">
+          <button type="button" class="textbook-icon-btn" id="textbook-prev-btn" aria-label="Previous textbook page">&larr;</button>
+          <label class="textbook-page-label">
+            <span class="textbook-sr">Go to page</span>
+            <input type="text" inputmode="numeric" id="textbook-page-input" value="1" autocomplete="off" />
+            <span id="textbook-page-total">of –</span>
+          </label>
+          <button type="button" class="textbook-icon-btn" id="textbook-next-btn" aria-label="Next textbook page">&rarr;</button>
+          <span class="notebook-toolbar-spacer"></span>
+          <button type="button" class="textbook-icon-btn" id="textbook-zoom-out-btn" aria-label="Zoom out">&minus;</button>
+          <button type="button" class="textbook-icon-btn" id="textbook-zoom-in-btn" aria-label="Zoom in">+</button>
+        </div>
+        <div class="textbook-link-row">
+          <button type="button" class="textbook-link-btn" id="textbook-link-btn"></button>
+        </div>
+      </aside>
     </div>
+
     <p class="notebook-save-status" id="notebook-save-status" hidden></p>
     <div id="notebook-link-modal" class="notebook-link-modal" hidden></div>
+    <div id="textbook-picker" class="notebook-link-modal" hidden></div>
   </main>
   <script src="js/topbar.js"></script>
   <script src="js/immersion.js"></script>
   <script src="js/app-tabs.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/hub-tasks.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="js/class-notebook-app.js"></script>
+  <script src="js/class-notebook-textbook.js"></script>
 </body>
 </html>

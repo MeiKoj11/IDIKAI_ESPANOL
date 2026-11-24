@@ -18,12 +18,27 @@
 const CLASS_NOTEBOOK_LANGUAGE_NAMES = { es: "Spanish", ja: "Japanese", fr: "French" };
 const CLASS_NOTEBOOK_SAVE_DELAY_MS = 600;
 
+// Text size works like a word processor's: one size for the whole notebook,
+// remembered per device. The ruled lines are drawn from the same number
+// (line height = 1.5 x size, rounded) so text always sits ON a line and
+// never gets cut through by one, whatever size is picked.
+const NOTEBOOK_FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20, 24, 28];
+const NOTEBOOK_FONT_SIZE_KEY = "idikai.classNotebookFontSize";
+const NOTEBOOK_MAX_PICTURE_BYTES = 25 * 1024 * 1024;
+
 let classNotebookLang = "es";
 let currentSpreadIndex = 0;
 let leftPageId = null;
 let rightPageId = null;
 let leftSaveTimeout = null;
 let rightSaveTimeout = null;
+let notebookFontSize = 14;
+// While the textbook panel is open the book narrows to ONE page at a time
+// (notebookShowSide says which); closed, it's the normal two-page spread.
+let notebookTextbookOpen = false;
+let notebookShowSide = "left";
+let pendingPictureRange = null;
+let pendingPictureSide = null;
 
 function getQueryParam(name) {
   return new URLSearchParams(window.location.search).get(name);
@@ -60,13 +75,19 @@ document.addEventListener("DOMContentLoaded", () => {
   leftTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "left"; });
   rightTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "right"; });
 
+  loadNotebookFontSize();
   initNotebookToolbar();
+  initNotebookFormatting();
   initNotebookLinking();
 
-  const prevBtn = document.getElementById("notebook-prev-btn");
-  const nextBtn = document.getElementById("notebook-next-btn");
-  if (prevBtn) prevBtn.addEventListener("click", goToPrevSpread);
-  if (nextBtn) nextBtn.addEventListener("click", goToNextSpread);
+  const bind = (id, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", fn);
+  };
+  bind("notebook-prev-btn", goToPrevPage);
+  bind("notebook-prev-btn-right", goToPrevPage);
+  bind("notebook-next-btn", goToNextPage);
+  bind("notebook-next-btn-left", goToNextPage);
 
   window.addEventListener("beforeunload", flushClassNotebookSaves);
   window.addEventListener("pagehide", flushClassNotebookSaves);
@@ -92,7 +113,13 @@ function ensureClassNotebookSpreadPages(spreadIndex) {
   return { left: pages[leftIdx], right: pages[rightIdx] };
 }
 
-function renderClassNotebookSpread(spreadIndex) {
+function formatNotebookDate(ts) {
+  if (!ts) return "";
+  const text = new Date(ts).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function renderClassNotebookSpread(spreadIndex, side) {
   // Switching spreads replaces both pages' DOM wholesale, so any
   // link-placement mode or popover referring to the old DOM would be
   // left dangling -- clear both defensively before the swap.
@@ -100,8 +127,11 @@ function renderClassNotebookSpread(spreadIndex) {
   closeNotebookLinkPopover();
   pendingLinkRange = null;
   pendingLinkSide = null;
+  pendingPictureRange = null;
+  pendingPictureSide = null;
 
   currentSpreadIndex = spreadIndex;
+  if (side) notebookShowSide = side;
   const { left, right } = ensureClassNotebookSpreadPages(spreadIndex);
   leftPageId = left.id;
   rightPageId = right.id;
@@ -112,16 +142,57 @@ function renderClassNotebookSpread(spreadIndex) {
   rightTextarea.innerHTML = right.content || "";
   refreshNotebookLinkStatuses(leftTextarea);
   refreshNotebookLinkStatuses(rightTextarea);
+  snapNotebookPictures(leftTextarea);
+  snapNotebookPictures(rightTextarea);
 
   const leftNumber = document.getElementById("notebook-left-page-number");
   const rightNumber = document.getElementById("notebook-right-page-number");
   if (leftNumber) leftNumber.textContent = `Page ${spreadIndex * 2 + 1}`;
   if (rightNumber) rightNumber.textContent = `Page ${spreadIndex * 2 + 2}`;
 
-  const prevBtn = document.getElementById("notebook-prev-btn");
-  if (prevBtn) prevBtn.hidden = spreadIndex === 0;
+  const leftDate = document.getElementById("notebook-left-date");
+  const rightDate = document.getElementById("notebook-right-date");
+  if (leftDate) leftDate.textContent = formatNotebookDate(left.createdAt);
+  if (rightDate) rightDate.textContent = formatNotebookDate(right.createdAt);
 
+  applyNotebookLayout();
   setClassNotebookSaveStatus("");
+}
+
+// Shows/hides the right bits for the current mode: two pages side by
+// side normally, one page at a time with the textbook open. Also tells
+// the textbook code which notebook page is now in front.
+function applyNotebookLayout() {
+  const book = document.getElementById("notebook-book");
+  if (book) {
+    book.classList.toggle("book-single", notebookTextbookOpen);
+    book.classList.toggle("book-show-left", notebookTextbookOpen && notebookShowSide === "left");
+    book.classList.toggle("book-show-right", notebookTextbookOpen && notebookShowSide === "right");
+  }
+  // "Previous" on the very first page has nowhere to go.
+  const prevLeft = document.getElementById("notebook-prev-btn");
+  if (prevLeft) prevLeft.hidden = currentSpreadIndex === 0;
+  const prevRight = document.getElementById("notebook-prev-btn-right");
+  if (prevRight) prevRight.hidden = notebookTextbookOpen && currentSpreadIndex === 0 && notebookShowSide === "left";
+  if (typeof window.refreshNotebookBookTags === "function") window.refreshNotebookBookTags();
+}
+
+// Called by class-notebook-textbook.js when the panel opens or closes.
+function setNotebookTextbookMode(open) {
+  notebookTextbookOpen = !!open;
+  if (open) notebookShowSide = lastFocusedNotebookPage === "right" ? "right" : "left";
+  applyNotebookLayout();
+}
+
+// The notebook page currently in front (the right one when the book is
+// showing both pages is only "current" in single-page mode).
+function getCurrentNotebookPageInfo() {
+  const side = notebookTextbookOpen ? notebookShowSide : lastFocusedNotebookPage;
+  return {
+    side,
+    id: side === "right" ? rightPageId : leftPageId,
+    number: currentSpreadIndex * 2 + (side === "right" ? 2 : 1),
+  };
 }
 
 function scheduleClassNotebookSave(which) {
@@ -175,15 +246,198 @@ function setClassNotebookSaveStatus(text) {
   el.textContent = text;
 }
 
-function goToPrevSpread() {
-  if (currentSpreadIndex === 0) return;
+// One page at a time with the textbook open, a whole spread otherwise.
+function goToPrevPage() {
   flushClassNotebookSaves();
-  renderClassNotebookSpread(currentSpreadIndex - 1);
+  if (notebookTextbookOpen && notebookShowSide === "right") {
+    notebookShowSide = "left";
+    applyNotebookLayout();
+    return;
+  }
+  if (currentSpreadIndex === 0) return;
+  renderClassNotebookSpread(currentSpreadIndex - 1, notebookTextbookOpen ? "right" : undefined);
 }
 
-function goToNextSpread() {
+function goToNextPage() {
   flushClassNotebookSaves();
-  renderClassNotebookSpread(currentSpreadIndex + 1);
+  if (notebookTextbookOpen && notebookShowSide === "left") {
+    notebookShowSide = "right";
+    applyNotebookLayout();
+    return;
+  }
+  renderClassNotebookSpread(currentSpreadIndex + 1, notebookTextbookOpen ? "left" : undefined);
+}
+
+// ---- Text size, undo/redo and pictures ----
+
+function notebookLineHeight() {
+  return Math.round(notebookFontSize * 1.5);
+}
+
+function loadNotebookFontSize() {
+  try {
+    const saved = parseInt(window.localStorage.getItem(NOTEBOOK_FONT_SIZE_KEY), 10);
+    if (NOTEBOOK_FONT_SIZES.includes(saved)) notebookFontSize = saved;
+  } catch (e) {
+    // localStorage unavailable -- keep the default size.
+  }
+}
+
+function applyNotebookFontSize() {
+  const book = document.getElementById("notebook-book");
+  if (book) {
+    book.style.setProperty("--fs", `${notebookFontSize}px`);
+    book.style.setProperty("--lh", `${notebookLineHeight()}px`);
+  }
+  const select = document.getElementById("notebook-size-select");
+  if (select) select.value = String(notebookFontSize);
+  snapNotebookPictures(document.getElementById("notebook-left-textarea"));
+  snapNotebookPictures(document.getElementById("notebook-right-textarea"));
+}
+
+function setNotebookFontSize(size) {
+  if (!NOTEBOOK_FONT_SIZES.includes(size)) return;
+  notebookFontSize = size;
+  try {
+    window.localStorage.setItem(NOTEBOOK_FONT_SIZE_KEY, String(size));
+  } catch (e) {
+    // Not remembered this time -- still applies for this visit.
+  }
+  applyNotebookFontSize();
+}
+
+function stepNotebookFontSize(delta) {
+  const i = NOTEBOOK_FONT_SIZES.indexOf(notebookFontSize) + delta;
+  const clamped = Math.max(0, Math.min(NOTEBOOK_FONT_SIZES.length - 1, i));
+  setNotebookFontSize(NOTEBOOK_FONT_SIZES[clamped]);
+}
+
+function initNotebookFormatting() {
+  const select = document.getElementById("notebook-size-select");
+  if (select) {
+    NOTEBOOK_FONT_SIZES.forEach((size) => {
+      const opt = document.createElement("option");
+      opt.value = String(size);
+      opt.textContent = `${size} pt`;
+      select.appendChild(opt);
+    });
+    select.addEventListener("change", () => setNotebookFontSize(parseInt(select.value, 10)));
+  }
+  const down = document.getElementById("notebook-size-down-btn");
+  const up = document.getElementById("notebook-size-up-btn");
+  if (down) down.addEventListener("click", () => stepNotebookFontSize(-1));
+  if (up) up.addEventListener("click", () => stepNotebookFontSize(1));
+
+  const undoBtn = document.getElementById("notebook-undo-btn");
+  const redoBtn = document.getElementById("notebook-redo-btn");
+  [undoBtn, redoBtn].forEach((btn) => {
+    if (btn) btn.addEventListener("mousedown", (e) => e.preventDefault());
+  });
+  if (undoBtn) undoBtn.addEventListener("click", () => document.execCommand("undo"));
+  if (redoBtn) redoBtn.addEventListener("click", () => document.execCommand("redo"));
+
+  const pictureBtn = document.getElementById("notebook-picture-btn");
+  const pictureInput = document.getElementById("notebook-picture-input");
+  if (pictureBtn && pictureInput) {
+    pictureBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    pictureBtn.addEventListener("click", () => {
+      // Remember where the cursor was -- the file dialog takes focus away.
+      const info = getCurrentNotebookPageInfo();
+      const editable = document.getElementById(info.side === "right" ? "notebook-right-textarea" : "notebook-left-textarea");
+      const sel = window.getSelection();
+      pendingPictureRange = null;
+      if (sel && sel.rangeCount && editable.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        pendingPictureRange = sel.getRangeAt(0).cloneRange();
+      }
+      pendingPictureSide = info.side;
+      pictureInput.click();
+    });
+    pictureInput.addEventListener("change", () => {
+      const file = pictureInput.files && pictureInput.files[0];
+      pictureInput.value = "";
+      if (file) uploadNotebookPicture(file);
+    });
+  }
+
+  applyNotebookFontSize();
+}
+
+// Pictures are uploaded to the same private file storage as the Storage
+// Locker (so the notebook's saved text stays small -- only a link to the
+// picture lives in the page). The picture sits in a box whose height is
+// always rounded UP to a whole number of ruled lines, so the lines below
+// it stay lined up with the margin and each other.
+function uploadNotebookPicture(file) {
+  if (!/^image\//.test(file.type)) {
+    window.alert("Please choose an image file (PNG, JPG, GIF or WebP).");
+    return;
+  }
+  if (file.size > NOTEBOOK_MAX_PICTURE_BYTES) {
+    window.alert("That picture is larger than the 25 MB limit.");
+    return;
+  }
+  setClassNotebookSaveStatus("Uploading picture…");
+  fetch("/api/storage-locker-upload", {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type,
+      "X-File-Name": encodeURIComponent(file.name),
+    },
+    body: file,
+  })
+    .then((res) =>
+      res.json().then((body) => {
+        if (!res.ok) throw new Error(body.error || "Upload failed.");
+        return body;
+      })
+    )
+    .then((result) => insertNotebookPicture(result))
+    .catch((err) => {
+      console.error(err);
+      setClassNotebookSaveStatus("");
+      window.alert(err.message || "Couldn't upload that picture — please try again.");
+    });
+}
+
+function insertNotebookPicture(result) {
+  const side = pendingPictureSide || lastFocusedNotebookPage;
+  const editable = document.getElementById(side === "right" ? "notebook-right-textarea" : "notebook-left-textarea");
+  if (!editable) return;
+  const src =
+    `/api/storage-locker-download?key=${encodeURIComponent(result.fileKey)}` +
+    `&name=${encodeURIComponent(result.fileName || "picture")}`;
+  const html =
+    `<div class="notebook-pic" contenteditable="false"><img src="${escapeHtmlAttr(src)}" alt="">` +
+    `<button type="button" class="notebook-pic-remove" contenteditable="false" aria-label="Remove picture">&times;</button></div>` +
+    `<div><br></div>`;
+  if (pendingPictureRange) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(pendingPictureRange);
+    document.execCommand("insertHTML", false, html);
+  } else {
+    editable.insertAdjacentHTML("beforeend", html);
+  }
+  pendingPictureRange = null;
+  pendingPictureSide = null;
+  snapNotebookPictures(editable);
+  persistNotebookSide(side);
+}
+
+function snapNotebookPictures(container) {
+  if (!container) return;
+  container.querySelectorAll(".notebook-pic").forEach((pic) => {
+    const img = pic.querySelector("img");
+    if (!img) return;
+    const snap = () => {
+      const lh = notebookLineHeight();
+      pic.style.height = "";
+      const h = img.getBoundingClientRect().height;
+      if (h > 0) pic.style.height = `${Math.ceil(h / lh) * lh}px`;
+    };
+    if (img.complete) snap();
+    else img.addEventListener("load", snap, { once: true });
+  });
 }
 
 let lastFocusedNotebookPage = "left";
@@ -319,6 +573,15 @@ function disarmLinkPlacement() {
 }
 
 function handleNotebookTextareaClick(e, side) {
+  const removePic = e.target.closest(".notebook-pic-remove");
+  if (removePic) {
+    e.preventDefault();
+    const pic = removePic.closest(".notebook-pic");
+    if (pic) pic.remove();
+    persistNotebookSide(side);
+    return;
+  }
+
   const icon = e.target.closest(".notebook-link-icon");
   if (icon) {
     e.preventDefault();

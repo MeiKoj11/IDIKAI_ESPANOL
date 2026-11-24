@@ -1820,9 +1820,12 @@ function handleApiRoute(req, res, url) {
       // Malformed header — fall back to the default name below.
     }
     const ext = path.extname(originalName).toLowerCase();
-    const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
+    // Images are allowed too, for pictures placed inside Class Notebook
+    // pages -- the Main Hub's upload button still only accepts PDF/Word
+    // (it checks its own list), so they never show up as Locker items.
+    const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".gif", ".webp"];
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      return sendJSON(res, 400, { error: "Only PDF and Word documents (.pdf, .doc, .docx) can be uploaded." }) || true;
+      return sendJSON(res, 400, { error: "Only PDF, Word documents and images (.pdf, .doc, .docx, .png, .jpg, .gif, .webp) can be uploaded." }) || true;
     }
     const sanitizedName = originalName.replace(/[/\\]/g, "_").replace(/[^\w.\- ]/g, "_").slice(0, 150) || "file";
     const contentType = req.headers["content-type"] || "application/octet-stream";
@@ -1849,6 +1852,52 @@ function handleApiRoute(req, res, url) {
       .catch((err) => {
         console.error("Storage Locker upload failed:", err.message);
         sendJSON(res, 400, { error: err.message });
+      });
+    return true;
+  }
+
+  // ---- GET /api/storage-locker-file-data?key=... ----
+  // The Class Notebook's textbook panel reads a Locker PDF with pdf.js,
+  // which fetches the file itself. The normal download route above
+  // redirects to a presigned R2 address on a different origin, which
+  // the browser would block pdf.js from reading (no CORS headers on
+  // the bucket) -- so this streams the same bytes from OUR origin
+  // instead. Same ownership rule (key must be under this user's own
+  // prefix) and PDFs only.
+  if (url.pathname === "/api/storage-locker-file-data" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (!r2.isR2Configured()) {
+      return sendJSON(res, 503, { error: "File uploads aren't set up on this server yet." }) || true;
+    }
+    const fileKey = url.searchParams.get("key") || "";
+    if (!fileKey.startsWith(`storage-locker/${user.id}/`) || fileKey.includes("..")) {
+      return sendJSON(res, 403, { error: "Not your file." }) || true;
+    }
+    if (path.extname(fileKey).toLowerCase() !== ".pdf") {
+      return sendJSON(res, 400, { error: "Only PDFs can be opened here." }) || true;
+    }
+    let presignedUrl;
+    try {
+      presignedUrl = r2.getPresignedDownloadUrl(fileKey, "textbook.pdf", "inline", 300);
+    } catch (err) {
+      return sendJSON(res, 500, { error: err.message }) || true;
+    }
+    fetch(presignedUrl)
+      .then((upstream) => {
+        if (!upstream.ok || !upstream.body) {
+          return sendJSON(res, upstream.status === 404 ? 404 : 502, { error: "Couldn't read that file." });
+        }
+        const headers = { "Content-Type": "application/pdf", "Cache-Control": "private, max-age=300" };
+        const length = upstream.headers.get("content-length");
+        if (length) headers["Content-Length"] = length;
+        res.writeHead(200, headers);
+        require("stream").Readable.fromWeb(upstream.body).on("error", () => res.destroy()).pipe(res);
+      })
+      .catch((err) => {
+        console.error("Storage Locker file-data failed:", err.message);
+        if (!res.headersSent) sendJSON(res, 502, { error: "Couldn't read that file." });
+        else res.destroy();
       });
     return true;
   }

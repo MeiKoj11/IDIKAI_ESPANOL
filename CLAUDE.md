@@ -272,6 +272,23 @@ As of the most recent session, done and committed:
   pattern rather than writing new JS. All button/title/body text has
   `data-immersion-key`s with real es/ja/fr translations already added.
 
+- **Class Notebook rebuild** (`class-notebook.html`, `js/class-notebook-app.js`,
+  new `js/class-notebook-textbook.js`, `css/idikai-refresh.css`, `js/storage.js`,
+  `server/server.js`) — ported from a Claude Design canvas (not yet committed).
+  Tight ruled lines (line height = 1.5 x font size, set via `--fs`/`--lh` on
+  `#notebook-book`; every block inside a page must be a whole number of `--lh`
+  tall or text gets cut by a rule), red margin, Word-style text size,
+  undo/redo, pictures (uploaded through `/api/storage-locker-upload`, which now
+  also accepts images; the page stores only a link). **Textbook panel**: opens a
+  Locker PDF (items with a `.pdf` `fileKey`) beside the notes via pdf.js (CDN),
+  streamed same-origin from the new `/api/storage-locker-file-data` route (the
+  normal download route redirects to R2, which pdf.js can't read cross-origin).
+  While the panel is open the book shows ONE page at a time. A notebook page can
+  be tied to a textbook page (`bookLink: {itemId, page}` via
+  `Storage.updateClassNotebookPageMeta`), shown as a "Book p. N" tag. New UI
+  strings have no `data-immersion-key` yet (known gap). Not yet tested in a
+  browser against the real server.
+
 Backlog: a growing stack of local commits not yet pushed (`git log
 --oneline` vs `git log origin/main..HEAD` if a remote is configured) — always
 remind Mei to `git push` from her own Terminal, then check the Render deploy.
