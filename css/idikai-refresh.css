@@ -2456,6 +2456,30 @@ body.class-notebook-body { background: var(--paper); color: var(--ink); }
   .notebook-page-head, .notebook-page-editable, .notebook-page-footer { padding-left: 76px; }
 }
 
+/* ---------- Class Notebook: full screen (focus mode) --------------------
+   Body class set by class-notebook-app.js. Hides the site chrome and lets
+   the book fill the window; the toolbar and the page head/footer stay. */
+.notebook-toolbar-btn .fs-icon-exit { display: none; }
+body.notebook-focus .notebook-toolbar-btn .fs-icon-enter { display: none; }
+body.notebook-focus .notebook-toolbar-btn .fs-icon-exit { display: inline; }
+body.notebook-focus #app-topbar,
+body.notebook-focus #app-tab-strip,
+body.notebook-focus #class-notebook-header { display: none; }
+body.notebook-focus .class-notebook-main {
+  max-width: none;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 10px 14px 12px;
+  gap: 10px;
+}
+body.notebook-focus .notebook-workarea { flex: 1; min-height: 0; }
+body.notebook-focus .notebook-book { height: auto; max-height: none; min-height: 0; }
+body.notebook-focus .textbook-panel { height: auto; }
+body.notebook-focus .notebook-save-status { position: fixed; right: 18px; bottom: 4px; margin: 0; }
+@media (max-width: 1100px) {
+  body.notebook-focus .textbook-panel { height: auto; }
+}
+
 /* ---------- Class Notebook: inline links to other sections -------------- */
 .notebook-toolbar-btn.active {
   background: var(--red);

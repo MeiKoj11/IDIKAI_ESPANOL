@@ -24,6 +24,7 @@ const CLASS_NOTEBOOK_SAVE_DELAY_MS = 600;
 // never gets cut through by one, whatever size is picked.
 const NOTEBOOK_FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20, 24, 28];
 const NOTEBOOK_FONT_SIZE_KEY = "idikai.classNotebookFontSize";
+const NOTEBOOK_FOCUS_KEY = "idikai.classNotebookFocusMode";
 const NOTEBOOK_MAX_PICTURE_BYTES = 25 * 1024 * 1024;
 
 let classNotebookLang = "es";
@@ -79,6 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initNotebookToolbar();
   initNotebookFormatting();
   initNotebookDates();
+  initNotebookFocusMode();
   initNotebookLinking();
 
   const bind = (id, fn) => {
@@ -304,6 +306,56 @@ function goToNextPage() {
     return;
   }
   renderClassNotebookSpread(currentSpreadIndex + 1, notebookTextbookOpen ? "left" : undefined);
+}
+
+// ---- Full screen ("focus mode"): just the toolbar and the notebook ----
+// Not the browser's own fullscreen API -- a class on <body> hides the
+// site chrome (top bar, tab strip, heading) and lets the book fill the
+// window, so nothing else about the page changes. Remembered per device.
+function setNotebookFocusMode(on, remember) {
+  document.body.classList.toggle("notebook-focus", on);
+  const btn = document.getElementById("notebook-fullscreen-btn");
+  const label = document.getElementById("notebook-fullscreen-label");
+  if (btn) {
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.classList.toggle("active", on);
+    btn.title = on ? "Exit full screen (Esc)" : "Full screen: just the notebook";
+  }
+  if (label) label.textContent = on ? "Exit" : "Full screen";
+  if (remember) {
+    try {
+      window.localStorage.setItem(NOTEBOOK_FOCUS_KEY, on ? "1" : "0");
+    } catch (e) {
+      // Not remembered -- still applies for this visit.
+    }
+  }
+  // Page height changed, so re-measure pictures against the lines.
+  snapNotebookPictures(document.getElementById("notebook-left-textarea"));
+  snapNotebookPictures(document.getElementById("notebook-right-textarea"));
+}
+
+function initNotebookFocusMode() {
+  const btn = document.getElementById("notebook-fullscreen-btn");
+  if (btn) {
+    btn.addEventListener("click", () => setNotebookFocusMode(!document.body.classList.contains("notebook-focus"), true));
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !document.body.classList.contains("notebook-focus")) return;
+    // Escape already closes link placement and the pickers first.
+    const modalOpen = ["notebook-link-modal", "textbook-picker"].some((id) => {
+      const el = document.getElementById(id);
+      return el && !el.hidden;
+    });
+    if (modalOpen || linkPlacementArmed) return;
+    setNotebookFocusMode(false, true);
+  });
+  let saved = false;
+  try {
+    saved = window.localStorage.getItem(NOTEBOOK_FOCUS_KEY) === "1";
+  } catch (e) {
+    // default: off
+  }
+  setNotebookFocusMode(saved, false);
 }
 
 // ---- Text size, undo/redo and pictures ----
