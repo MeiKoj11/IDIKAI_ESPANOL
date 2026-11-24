@@ -78,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadNotebookFontSize();
   initNotebookToolbar();
   initNotebookFormatting();
+  initNotebookDates();
   initNotebookLinking();
 
   const bind = (id, fn) => {
@@ -113,10 +114,49 @@ function ensureClassNotebookSpreadPages(spreadIndex) {
   return { left: pages[leftIdx], right: pages[rightIdx] };
 }
 
-function formatNotebookDate(ts) {
-  if (!ts) return "";
-  const text = new Date(ts).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+// A page's date is whatever the learner picked (page.date, "YYYY-MM-DD"),
+// falling back to when the page was created.
+function pageDateValue(page) {
+  if (page.date) return page.date;
+  const d = new Date(page.createdAt || Date.now());
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function formatNotebookDate(value) {
+  const [y, m, d] = String(value).split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const text = new Date(y, m - 1, d).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function setNotebookPageDateDisplay(side, page) {
+  const value = pageDateValue(page);
+  const label = document.getElementById(`notebook-${side}-date`);
+  const input = document.getElementById(`notebook-${side}-date-input`);
+  if (label) label.textContent = formatNotebookDate(value);
+  if (input) input.value = value;
+}
+
+function initNotebookDates() {
+  ["left", "right"].forEach((side) => {
+    const label = document.getElementById(`notebook-${side}-date`);
+    const input = document.getElementById(`notebook-${side}-date-input`);
+    if (!label || !input) return;
+    label.addEventListener("click", () => {
+      if (typeof input.showPicker === "function") {
+        try { input.showPicker(); return; } catch (e) { /* fall through */ }
+      }
+      input.focus();
+      input.click();
+    });
+    input.addEventListener("change", () => {
+      const pageId = side === "left" ? leftPageId : rightPageId;
+      if (!input.value || !pageId) return;
+      const page = Storage.updateClassNotebookPageMeta(pageId, { date: input.value });
+      if (page) setNotebookPageDateDisplay(side, page);
+    });
+  });
 }
 
 function renderClassNotebookSpread(spreadIndex, side) {
@@ -150,10 +190,8 @@ function renderClassNotebookSpread(spreadIndex, side) {
   if (leftNumber) leftNumber.textContent = `Page ${spreadIndex * 2 + 1}`;
   if (rightNumber) rightNumber.textContent = `Page ${spreadIndex * 2 + 2}`;
 
-  const leftDate = document.getElementById("notebook-left-date");
-  const rightDate = document.getElementById("notebook-right-date");
-  if (leftDate) leftDate.textContent = formatNotebookDate(left.createdAt);
-  if (rightDate) rightDate.textContent = formatNotebookDate(right.createdAt);
+  setNotebookPageDateDisplay("left", left);
+  setNotebookPageDateDisplay("right", right);
 
   applyNotebookLayout();
   setClassNotebookSaveStatus("");
