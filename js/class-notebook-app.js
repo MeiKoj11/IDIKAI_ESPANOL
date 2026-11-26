@@ -73,8 +73,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const rightTextarea = document.getElementById("notebook-right-textarea");
   leftTextarea.addEventListener("input", () => scheduleClassNotebookSave("left"));
   rightTextarea.addEventListener("input", () => scheduleClassNotebookSave("right"));
-  leftTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "left"; });
-  rightTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "right"; });
+  leftTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "left"; saveNotebookPlace(); });
+  rightTextarea.addEventListener("focus", () => { lastFocusedNotebookPage = "right"; saveNotebookPlace(); });
 
   loadNotebookFontSize();
   initNotebookToolbar();
@@ -92,15 +92,45 @@ document.addEventListener("DOMContentLoaded", () => {
   bind("notebook-next-btn", goToNextPage);
   bind("notebook-next-btn-left", goToNextPage);
 
-  window.addEventListener("beforeunload", flushClassNotebookSaves);
-  window.addEventListener("pagehide", flushClassNotebookSaves);
+  // storage.js's own unload flush has already run by the time these fire
+  // (it registered first), so flush again after saving the last keystrokes.
+  const saveBeforeLeaving = () => {
+    flushClassNotebookSaves();
+    Storage.flushPendingWrites();
+  };
+  window.addEventListener("beforeunload", saveBeforeLeaving);
+  window.addEventListener("pagehide", saveBeforeLeaving);
 
-  // Open on the most recent spread (the pages the learner was last
-  // writing on), not always the very start of the notebook.
-  const pages = Storage.getClassNotebookPages(classNotebookLang);
-  const startSpread = pages.length > 0 ? Math.floor((pages.length - 1) / 2) : 0;
-  renderClassNotebookSpread(startSpread);
+  openNotebookWhereLeftOff();
 });
+
+// Reopens the pages that were on screen last time. With nothing
+// remembered yet, opens the page most recently written on -- never just
+// the newest page, which is often a blank one flipped past.
+function openNotebookWhereLeftOff() {
+  const pages = Storage.getClassNotebookPages(classNotebookLang);
+  const place = Storage.getClassNotebookPlace(classNotebookLang);
+  let index = place ? pages.findIndex((p) => p.id === place.pageId) : -1;
+  let side = index >= 0 ? place.side : null;
+  if (index < 0) {
+    let latest = 0;
+    pages.forEach((p, i) => {
+      if (p.content && (p.updatedAt || p.createdAt) > latest) {
+        latest = p.updatedAt || p.createdAt;
+        index = i;
+      }
+    });
+  }
+  index = Math.max(index, 0);
+  side = side || (index % 2 ? "right" : "left");
+  lastFocusedNotebookPage = side;
+  renderClassNotebookSpread(Math.floor(index / 2), side);
+}
+
+function saveNotebookPlace() {
+  const { id, side } = getCurrentNotebookPageInfo();
+  if (id) Storage.saveClassNotebookPlace(classNotebookLang, { pageId: id, side });
+}
 
 // Makes sure both page slots of a spread exist, creating blank ones as
 // needed — this is the ONLY place new pages ever get created, whether
@@ -173,7 +203,12 @@ function renderClassNotebookSpread(spreadIndex, side) {
   pendingPictureSide = null;
 
   currentSpreadIndex = spreadIndex;
-  if (side) notebookShowSide = side;
+  if (side) {
+    notebookShowSide = side;
+    lastFocusedNotebookPage = side;
+  } else {
+    lastFocusedNotebookPage = "left";
+  }
   const { left, right } = ensureClassNotebookSpreadPages(spreadIndex);
   leftPageId = left.id;
   rightPageId = right.id;
@@ -215,6 +250,7 @@ function applyNotebookLayout() {
   const prevRight = document.getElementById("notebook-prev-btn-right");
   if (prevRight) prevRight.hidden = notebookTextbookOpen && currentSpreadIndex === 0 && notebookShowSide === "left";
   if (typeof window.refreshNotebookBookTags === "function") window.refreshNotebookBookTags();
+  saveNotebookPlace();
 }
 
 // Called by class-notebook-textbook.js when the panel opens or closes.
@@ -291,6 +327,7 @@ function goToPrevPage() {
   flushClassNotebookSaves();
   if (notebookTextbookOpen && notebookShowSide === "right") {
     notebookShowSide = "left";
+    lastFocusedNotebookPage = "left";
     applyNotebookLayout();
     return;
   }
@@ -302,6 +339,7 @@ function goToNextPage() {
   flushClassNotebookSaves();
   if (notebookTextbookOpen && notebookShowSide === "left") {
     notebookShowSide = "right";
+    lastFocusedNotebookPage = "right";
     applyNotebookLayout();
     return;
   }

@@ -130,6 +130,7 @@ const STORAGE_KEYS = {
   conjugationTestSaved: "conjugationTest.saved",
   storageLockerItems: "mainHub.storageLocker",
   classNotebookPages: "mainHub.classNotebookPages",
+  classNotebookPlace: "mainHub.classNotebookPlace",
 };
 
 function readJSON(key, fallback) {
@@ -1466,6 +1467,19 @@ function updateClassNotebookPageMeta(pageId, updates) {
   return page;
 }
 
+// Where the learner left each notebook: { [language]: { pageId, side } },
+// so it reopens on that page, on any device.
+function getClassNotebookPlace(language) {
+  return readJSON(STORAGE_KEYS.classNotebookPlace, {})[language] || null;
+}
+
+function saveClassNotebookPlace(language, place) {
+  const all = readJSON(STORAGE_KEYS.classNotebookPlace, {});
+  const current = all[language];
+  if (current && current.pageId === place.pageId && current.side === place.side) return;
+  writeJSON(STORAGE_KEYS.classNotebookPlace, { ...all, [language]: place });
+}
+
 // ---- Saved sentence tests ----
 // A completed, self-marked sentence-test run the learner chose to keep
 // (saving is always optional — see spanish-sentence-test-app.js's
@@ -1842,6 +1856,9 @@ const Storage = {
   deleteStorageLockerItem,
   getClassNotebookPages,
   addClassNotebookPage,
+  getClassNotebookPlace,
+  saveClassNotebookPlace,
+  flushPendingWrites,
   updateClassNotebookPage,
   updateClassNotebookPageMeta,
   getTasks,
