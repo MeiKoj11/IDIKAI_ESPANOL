@@ -195,8 +195,9 @@ this file and `git log` are the project's shared memory across sessions.
   "yes" / "no" / "none", unset = still to check. Rules are in `decide()`;
   check them with `node scripts/check-verb-recognition.js`. New save paths
   must go through `addWordIfNotDuplicate`.
-- Still to do: (3) test picker for common / saved / both and regular /
-  irregular.
+- `js/spanish-verb-picker.js` is the "which verbs?" section on both Spanish
+  tests (common / saved themes / both, regular / irregular, single verbs).
+  French and Japanese tests don't use it.
 
 ## File-naming conventions worth knowing
 

@@ -3227,3 +3227,17 @@ textarea.entry-text-hl-input::selection { color: transparent; background: rgba(1
 }
 .verb-panel-btn-quiet { background: var(--card); color: var(--red); }
 .verb-panel-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ---- Verb picker on the Spanish tests (js/spanish-verb-picker.js) ---- */
+.verb-picker-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0 0 1.4rem;
+  max-height: 20vh;
+  overflow-y: auto;
+}
+.verb-picker-themes[hidden] { display: none; }
+.verb-picker-count { font-weight: 700; margin: 0.7rem 0 0.4rem; }
+.verb-picker-details summary { cursor: pointer; font-weight: 700; color: var(--red); }
+.verb-picker-buttons { display: flex; gap: 0.4rem; margin: 0.5rem 0; }

@@ -61,34 +61,8 @@ function buildSpanishVerbPool() {
   return common.concat(fromVocab);
 }
 
-function populateTestVerbCheckboxes() {
-  const wrap = document.getElementById("tenses-test-verb-checkboxes");
-  if (!wrap) return;
-  wrap.innerHTML = "";
-  const pool = buildSpanishVerbPool()
-    .slice()
-    .sort((a, b) => a.infinitive.localeCompare(b.infinitive));
-  pool.forEach((verb) => {
-    const label = document.createElement("label");
-    label.className = "tenses-test-checkbox";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = verb.infinitive;
-    input.checked = true;
-    label.appendChild(input);
-    label.appendChild(document.createTextNode(` ${verb.infinitive} (${verb.english || "?"})${verb.fromVocab ? " ★" : ""}`));
-    wrap.appendChild(label);
-  });
-}
-
-function selectedTestVerbs() {
-  const wrap = document.getElementById("tenses-test-verb-checkboxes");
-  if (!wrap) return [];
-  const checkedInfinitives = new Set(
-    Array.from(wrap.querySelectorAll("input[type=checkbox]:checked")).map((i) => i.value)
-  );
-  return buildSpanishVerbPool().filter((v) => checkedInfinitives.has(v.infinitive));
-}
+// The shared "which verbs?" section (see spanish-verb-picker.js).
+let verbPicker = null;
 
 function populateTestPersonCheckboxes() {
   const wrap = document.getElementById("tenses-test-person-checkboxes");
@@ -217,7 +191,7 @@ function startTensesTestWithConfig(config) {
 }
 
 function startTensesTest() {
-  const verbs = selectedTestVerbs();
+  const verbs = verbPicker.verbs();
   const persons = selectedTestPersons();
   const tenses = selectedTestTenses();
   const direction = selectedTestDirection();
@@ -347,7 +321,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   populateTestCheckboxes();
-  populateTestVerbCheckboxes();
+  verbPicker = SpanishVerbPicker.mount(document.getElementById("tenses-test-verb-picker"));
   populateTestPersonCheckboxes();
 
   document.getElementById("tenses-test-select-all").addEventListener("click", () => {
@@ -355,12 +329,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("tenses-test-clear").addEventListener("click", () => {
     document.querySelectorAll("#tenses-test-checkboxes input[type=checkbox]").forEach((i) => (i.checked = false));
-  });
-  document.getElementById("tenses-test-verbs-select-all").addEventListener("click", () => {
-    document.querySelectorAll("#tenses-test-verb-checkboxes input[type=checkbox]").forEach((i) => (i.checked = true));
-  });
-  document.getElementById("tenses-test-verbs-clear").addEventListener("click", () => {
-    document.querySelectorAll("#tenses-test-verb-checkboxes input[type=checkbox]").forEach((i) => (i.checked = false));
   });
   document.getElementById("tenses-test-random-btn").addEventListener("click", startRandomTensesTest);
   document.getElementById("tenses-test-start-btn").addEventListener("click", startTensesTest);

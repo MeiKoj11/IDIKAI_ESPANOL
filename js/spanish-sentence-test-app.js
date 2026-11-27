@@ -50,55 +50,8 @@ function personsForTense(tense) {
     : SpanishConjugator.PERSON_KEYS;
 }
 
-function populateTestThemeCheckboxes() {
-  const wrap = document.getElementById("tenses-test-theme-checkboxes");
-  if (!wrap) return;
-  wrap.innerHTML = "";
-  const themes = Storage.getThemes().filter((t) => t.language === "es");
-  themes.forEach((theme) => {
-    const label = document.createElement("label");
-    label.className = "tenses-test-checkbox";
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = theme.id;
-    label.appendChild(input);
-    label.appendChild(document.createTextNode(` ${theme.name}`));
-    wrap.appendChild(label);
-  });
-}
-
-// Verbs saved in one theme -- those the verb dictionary knows, regular or
-// irregular (same rule as the quick Conjugation Test), one per infinitive.
-function verbsFromTheme(themeId) {
-  const savedWords = typeof Storage !== "undefined" && Storage.getVerbWords ? Storage.getVerbWords("es") : [];
-  return SpanishConjugator.verbsForSavedWords(savedWords.filter((w) => w.themeId === themeId));
-}
-
-// Unions the curated "most common verbs" list (if ticked) with every
-// ticked theme's verbs, deduplicated by infinitive.
-function selectedVerbPool() {
-  const pool = [];
-  const seen = new Set();
-  const addVerb = (v) => {
-    if (seen.has(v.infinitive)) return;
-    seen.add(v.infinitive);
-    pool.push(v);
-  };
-
-  const commonCheckbox = document.getElementById("tenses-test-common-verbs-checkbox");
-  if (commonCheckbox && commonCheckbox.checked) {
-    SpanishConjugator.VERBS.forEach(addVerb);
-  }
-
-  const wrap = document.getElementById("tenses-test-theme-checkboxes");
-  if (wrap) {
-    Array.from(wrap.querySelectorAll("input[type=checkbox]:checked")).forEach((input) => {
-      verbsFromTheme(input.value).forEach(addVerb);
-    });
-  }
-
-  return pool;
-}
+// The shared "which verbs?" section (see spanish-verb-picker.js).
+let verbPicker = null;
 
 function selectedQuestionCount() {
   const checked = document.querySelector('input[name="tenses-test-question-count"]:checked');
@@ -229,7 +182,7 @@ function startTensesTestWithConfig(config) {
 
 function startTensesTest() {
   startTensesTestWithConfig({
-    verbs: selectedVerbPool(),
+    verbs: verbPicker.verbs(),
     tenses: selectedTestTenses(),
     count: selectedQuestionCount(),
   });
@@ -1331,7 +1284,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   populateTestCheckboxes();
-  populateTestThemeCheckboxes();
+  verbPicker = SpanishVerbPicker.mount(document.getElementById("tenses-test-verb-picker"));
 
   const submitBtn = document.getElementById("tenses-test-submit-btn");
   if (submitBtn) submitBtn.dataset.defaultLabel = submitBtn.textContent;

@@ -310,6 +310,16 @@
     if (!findVerb(infinitive)) savedVerbs.set(infinitive, verbFromDictionary(infinitive, "", packed));
   }
 
+  // Whether a verb departs from the ordinary pattern anywhere (stem
+  // changes and irregular participles count; "busqué"-type spelling
+  // doesn't). Dictionary verbs carry the answer, computed the same way.
+  function isIrregular(verb) {
+    if (verb.forms) return !!verb.irregular;
+    const participle = PAST_PARTICIPLE_OVERRIDES[verb.infinitive];
+    const ownParticiple = !!participle && !/(ado|ido|ído)$/.test(participle);
+    return !!(verb.irregular || verb.stemChange || verb.overrides) || ownParticiple;
+  }
+
   // The infinitive a saved word stands for: the one remembered on it
   // (older saves wrote "comer (to eat)"), else the word itself.
   function savedInfinitive(word) {
@@ -406,6 +416,7 @@
     verbFromDictionary,
     verbsForSavedWords,
     savedInfinitive,
+    isIrregular,
     VERBS,
     TENSE_KEYS,
     TENSE_LABELS,
