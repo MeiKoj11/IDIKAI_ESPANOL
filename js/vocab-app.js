@@ -100,6 +100,16 @@ let selectedWordIds = new Set();
 // "english-az" (alphabetical by english). Defaults to newest-first,
 // matching the sort dropdown's default selection.
 let wordListSortMode = "newest";
+// The word whose Edit / Move / Delete buttons are showing.
+let openWordActionsId = null;
+// What's typed in the home page's theme search.
+let themeSearchQuery = "";
+let treeRevealed = false;
+const VOCAB_TREE_OPEN_KEY = "idikai.vocabTreeOpen";
+const FOLDER_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h6l2 2h10v11H3z"/></svg>';
+const THEME_ICON =
+  '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 9h6M9 13h6"/></svg>';
 // { query, partOfSpeech, verbClass } (Japanese) or { query, partOfSpeech,
 // verbType } (Spanish/French) set right after a dictionary lookup that
 // identified a verb and its conjugation class — consumed (and cleared)
@@ -167,24 +177,15 @@ function applyActiveThemeToUI() {
   const englishPlaceholder = document.getElementById("field-english");
   if (englishPlaceholder) englishPlaceholder.placeholder = ENGLISH_FIELD_PLACEHOLDER[activeTheme.language] || ENGLISH_FIELD_PLACEHOLDER.es;
 
-  // theme.html's two bubbles.
+  // theme.html: the open theme's heading and its Test / Add vocab buttons.
   const hubHeading = document.getElementById("theme-hub-heading");
   if (hubHeading) hubHeading.textContent = activeTheme.name;
   const hubTestLink = document.getElementById("theme-hub-test-link");
   if (hubTestLink) hubTestLink.href = `quiz.html?id=${id}`;
-  const hubTestSub = document.getElementById("theme-hub-test-sub");
-  if (hubTestSub) {
-    hubTestSub.textContent =
-      activeTheme.language === "es" ? "Flashcard quiz or verb conjugation practice" : "Flashcard quiz";
-  }
   const hubAddLink = document.getElementById("theme-hub-add-link");
   if (hubAddLink) hubAddLink.href = `add-vocab.html?id=${id}`;
-  // "View Vocab" opens the same add-vocab.html page (it already renders
-  // the saved-words list) in a stripped-down ?view=list mode that hides
-  // the add-a-word form and bulk-import panel, so it actually reads as
-  // a plain list rather than looking identical to "Add New Vocab".
-  const hubViewLink = document.getElementById("theme-hub-view-link");
-  if (hubViewLink) hubViewLink.href = `add-vocab.html?id=${id}&view=list`;
+  const allLink = document.getElementById("theme-all-link");
+  if (allLink) allLink.href = `vocab.html?lang=${activeTheme.language}`;
 
   // Verb conjugation is a Spanish-only concept (conjugation tables,
   // detected verb forms, the conjugation quiz mode) — hide every entry
@@ -196,29 +197,15 @@ function applyActiveThemeToUI() {
   if (verbDrillLabel) verbDrillLabel.hidden = activeTheme.language !== "es";
 
   // A folder (created via Sort mode's drag-to-group) has no vocab of
-  // its own -- it only groups other themes/folders -- so it hides the
-  // Add/Test/View bubbles a real vocab theme shows.
-  const bubbles = document.getElementById("theme-vocab-bubbles");
-  if (bubbles) bubbles.hidden = activeTheme.type === "folder";
-
-  // A folder's own page should look exactly like the top-level Vocab
-  // Bank "Themes" panel -- same heading/hint/Add-theme row -- instead
-  // of the bespoke "Sub-folders" panel a regular vocab-holding theme
-  // shows alongside its Add/Test/View bubbles. Since it's the same
-  // page design, the same drag-to-merge/-group behaviour just works
-  // recursively at any folder depth for free.
+  // its own -- it only groups other themes/folders -- so it hides "Add
+  // vocab" and the word list, and can create themes as well as sub-folders.
   const isFolder = activeTheme.type === "folder";
-  const subfolderHeadingBlock = document.getElementById("subfolder-heading-block");
-  const folderHeadingBlock = document.getElementById("folder-heading-block");
-  const newSubfolderForm = document.getElementById("new-subfolder-form");
-  const themeSublistPanel = document.getElementById("theme-sublist-panel");
-  const folderNewThemeForm = document.getElementById("new-theme-form");
-  if (subfolderHeadingBlock) subfolderHeadingBlock.hidden = isFolder;
-  if (folderHeadingBlock) folderHeadingBlock.hidden = !isFolder;
-  if (newSubfolderForm) newSubfolderForm.hidden = isFolder;
-  if (themeSublistPanel) themeSublistPanel.classList.toggle("panel", isFolder);
-  if (folderNewThemeForm) folderNewThemeForm.hidden = !isFolder;
-  if (isFolder) {
+  if (document.getElementById("theme-tree")) {
+    if (hubAddLink) hubAddLink.hidden = isFolder;
+    const wordPanel = document.getElementById("word-list-panel");
+    if (wordPanel) wordPanel.hidden = isFolder;
+    const folderThemeToggle = document.getElementById("new-theme-toggle");
+    if (folderThemeToggle) folderThemeToggle.hidden = !isFolder;
     const folderLangSelect = document.getElementById("new-theme-language");
     if (folderLangSelect) folderLangSelect.value = activeTheme.language;
   }
@@ -268,15 +255,6 @@ function renderAddExistingThemeForm() {
   const select = document.getElementById("add-existing-theme-select");
   if (!form || !select || !activeTheme) return;
 
-  // A folder's own page mirrors the top-level Vocab Bank page exactly
-  // -- Add theme only, no separate "add existing" picker. Pulling an
-  // existing theme in is done from the PARENT view instead, by
-  // dragging it onto the folder's tile (see attachThemeDragHandlers).
-  if (activeTheme.type === "folder") {
-    form.hidden = true;
-    return;
-  }
-
   const candidates = Storage.getThemes().filter(
     (t) =>
       t.language === activeTheme.language &&
@@ -285,11 +263,13 @@ function renderAddExistingThemeForm() {
       !Storage.isThemeDescendantOf(activeTheme.id, t.id)
   );
 
+  // The form opens from its "Add existing theme" button.
+  const toggle = document.getElementById("add-existing-toggle");
+  if (toggle) toggle.hidden = candidates.length === 0;
   if (candidates.length === 0) {
     form.hidden = true;
     return;
   }
-  form.hidden = false;
   select.innerHTML = "";
   candidates
     .slice()
@@ -366,12 +346,55 @@ function handleNewSubfolderSubmit(e) {
   if (!nameInput) return;
   const name = nameInput.value.trim();
   if (!name) return;
-  Storage.addTheme(name, activeTheme.language, activeTheme.id);
+  // Inside a folder, a "sub-folder" is another folder; inside a theme it
+  // stays what it always was, a theme that can hold words of its own.
+  Storage.addTheme(name, activeTheme.language, activeTheme.id, activeTheme.type === "folder" ? "folder" : undefined);
   nameInput.value = "";
   renderThemeList();
 }
 
 
+
+// The home and side-view controls: the "..." menu, the buttons that open
+// the add forms, search, and the quiz page when it isn't tied to a theme.
+function initVocabControls() {
+  [
+    ["vocab-more-btn", "vocab-more-menu"],
+    ["new-theme-toggle", "new-theme-form"],
+    ["new-subfolder-toggle", "new-subfolder-form"],
+    ["add-existing-toggle", "add-existing-theme-form"],
+  ].forEach(([buttonId, targetId]) => {
+    const button = document.getElementById(buttonId);
+    const target = document.getElementById(targetId);
+    if (!button || !target) return;
+    button.addEventListener("click", (e) => {
+      e.stopPropagation();
+      target.hidden = !target.hidden;
+      button.setAttribute("aria-expanded", String(!target.hidden));
+      const field = target.querySelector("input, select:not([hidden])");
+      if (!target.hidden && field) field.focus();
+    });
+  });
+  const menu = document.getElementById("vocab-more-menu");
+  if (menu) {
+    document.addEventListener("click", () => {
+      menu.hidden = true;
+      document.getElementById("vocab-more-btn").setAttribute("aria-expanded", "false");
+    });
+  }
+  on("theme-search", "input", (e) => {
+    themeSearchQuery = e.target.value;
+    renderThemeList();
+  });
+  const testLink = document.getElementById("vocab-test-link");
+  if (testLink && activeLangFilter) testLink.href = `quiz.html?lang=${activeLangFilter}`;
+  const quizBack = document.getElementById("quiz-back-link");
+  if (quizBack && !activeTheme) {
+    quizBack.href = `vocab.html?lang=${activeLangFilter || "es"}`;
+    const name = document.getElementById("active-theme-name");
+    if (name) name.textContent = "All themes";
+  }
+}
 
 // Note: add-vocab.html used to have its own in-page, per-theme tab strip
 // here (switching tabs swapped the shared form in place, with in-memory
@@ -425,6 +448,7 @@ document.addEventListener("DOMContentLoaded", () => {
   on("theme-sort-btn", "click", handleSortToggle);
   on("theme-undo-btn", "click", handleUndoClick);
   on("theme-trash-btn", "click", handleTrashToggle);
+  initVocabControls();
   initThemeHeaderEditMenu();
   on("add-word-form", "submit", handleAddWordSubmit);
   on("field-furigana", "input", handleFuriganaManualEdit);
@@ -877,21 +901,35 @@ function handleNewThemeSubmit(e) {
 }
 
 function renderThemeList() {
+  renderThemeTree();
+  renderVocabSummary();
+  const hint = document.getElementById("theme-sort-hint");
+  if (hint) hint.hidden = !sortModeActive;
   const list = document.getElementById("theme-list");
   if (!list) return;
   // On theme.html this list is showing activeTheme's sub-folders (set
   // in applyActiveThemeToUI), scoped to its own language; on vocab.html
   // it's the top-level list, scoped by the page's own language filter.
   const effectiveLangFilter = activeTheme ? activeTheme.language : activeLangFilter;
-  const themes = Storage.getChildThemes(themeListParentId, effectiveLangFilter);
+  // Searching (home page only) looks through every folder, at any depth.
+  const query = activeTheme ? "" : themeSearchQuery.trim().toLowerCase();
+  const themes = query
+    ? Storage.getThemes().filter(
+        (t) => (!effectiveLangFilter || t.language === effectiveLangFilter) && t.name.toLowerCase().includes(query)
+      )
+    : Storage.getChildThemes(themeListParentId, effectiveLangFilter);
   list.innerHTML = "";
 
   if (themes.length === 0) {
     const li = document.createElement("li");
     li.className = "empty-hint";
-    if (activeTheme) {
-      li.textContent = "No sub-folders yet — create one below.";
-      li.dataset.immersionKey = "noSubfoldersHint";
+    if (query) {
+      li.textContent = "No themes match that search.";
+    } else if (activeTheme) {
+      // A theme with nothing inside just shows its words; only an empty
+      // folder needs telling.
+      if (activeTheme.type !== "folder") return;
+      li.textContent = "Nothing in this folder yet.";
     } else if (activeLangFilter) {
       li.textContent = `No ${LANGUAGE_NAMES[activeLangFilter]} themes yet — add one above to get started.`;
     } else {
@@ -907,11 +945,15 @@ function renderThemeList() {
 
     const li = document.createElement("li");
     li.className = `theme-item lang-${theme.language}${isFolder ? " theme-item-folder" : ""}${
-      sortModeActive ? " theme-item-sortable" : ""
+      sortModeActive && !query ? " theme-item-sortable" : ""
     }`;
     li.dataset.themeId = theme.id;
 
-    if (!sortModeActive) {
+    if (!sortModeActive || query) {
+      li.tabIndex = 0;
+      li.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.target === li) li.click();
+      });
       li.addEventListener("click", () => {
         window.location.href = `theme.html?id=${encodeURIComponent(theme.id)}`;
       });
@@ -921,6 +963,12 @@ function renderThemeList() {
     // itself, per the VOCAB2909 mockup -- just the name, and a single
     // plain-text count line underneath (no pill/badge styling; see
     // idikai-refresh.css's "#theme-list .theme-meta" rule).
+    const icon = document.createElement("span");
+    icon.className = "theme-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = isFolder ? FOLDER_ICON : THEME_ICON;
+    li.appendChild(icon);
+
     const nameEl = document.createElement("span");
     nameEl.className = "theme-name";
     nameEl.textContent = theme.name;
@@ -930,6 +978,10 @@ function renderThemeList() {
     meta.className = "theme-meta";
 
     const metaParts = [];
+    if (query) {
+      const path = Storage.getThemeAncestors(theme.id).map((t) => t.name).join(" / ");
+      if (path) metaParts.push(`in ${path}`);
+    }
     if (!isFolder) {
       const wordCount = Storage.getWords(theme.id).length;
       metaParts.push(`${wordCount} word${wordCount === 1 ? "" : "s"}`);
@@ -970,10 +1022,119 @@ function renderThemeList() {
     editWrap.addEventListener("click", (e) => e.stopPropagation());
     li.appendChild(editWrap);
 
-    if (sortModeActive) attachThemeDragHandlers(li, theme);
+    if (sortModeActive && !query) attachThemeDragHandlers(li, theme);
 
     list.appendChild(li);
   });
+}
+
+// ---- Home summary and the side bar's folder tree ----
+
+function renderVocabSummary() {
+  const countLabel = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const summary = document.getElementById("vocab-summary");
+  if (summary) {
+    const themes = Storage.getThemes().filter((t) => !activeLangFilter || t.language === activeLangFilter);
+    const words = themes.reduce((total, t) => total + Storage.getWords(t.id).length, 0);
+    const top = themes.filter((t) => !t.parentId).length;
+    summary.textContent = `${countLabel(words, "word")} in ${countLabel(top, "theme")}`;
+  }
+  const detail = document.getElementById("theme-detail");
+  if (detail && activeTheme) {
+    const inside = Storage.getChildThemes(activeTheme.id).length;
+    const parts = [];
+    if (activeTheme.type !== "folder") parts.push(countLabel(Storage.getWords(activeTheme.id).length, "word"));
+    if (inside || activeTheme.type === "folder") parts.push(`${countLabel(inside, "item")} inside`);
+    detail.textContent = parts.join(" \u00b7 ");
+  }
+}
+
+function readOpenFolders() {
+  try {
+    return new Set(JSON.parse(window.sessionStorage.getItem(VOCAB_TREE_OPEN_KEY)) || []);
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveOpenFolders(open) {
+  try {
+    window.sessionStorage.setItem(VOCAB_TREE_OPEN_KEY, JSON.stringify(Array.from(open)));
+  } catch (e) {
+    // the tree just starts closed next time
+  }
+}
+
+// theme.html's side bar: every theme and folder, nested, with the open
+// one highlighted. In Sort mode its rows drag exactly like the list's.
+function renderThemeTree() {
+  const tree = document.getElementById("theme-tree");
+  if (!tree || !activeTheme) return;
+  const current = Storage.getTheme(activeTheme.id);
+  if (!current) {
+    // Sorting just merged or removed the open theme.
+    window.location.replace(`vocab.html?lang=${activeTheme.language}`);
+    return;
+  }
+  activeTheme = current;
+  renderThemeBreadcrumb();
+
+  const open = readOpenFolders();
+  // On arrival, show the way to the open theme and what's inside it; after
+  // that the arrows are the learner's to open and close.
+  if (!treeRevealed) {
+    treeRevealed = true;
+    Storage.getThemeAncestors(current.id).concat(current).forEach((t) => open.add(t.id));
+    saveOpenFolders(open);
+  }
+  tree.innerHTML = "";
+
+  const addRows = (parentId, depth) => {
+    Storage.getChildThemes(parentId, current.language).forEach((theme) => {
+      const hasInside = Storage.getChildThemes(theme.id).length > 0;
+      const isOpen = open.has(theme.id);
+      const row = document.createElement("div");
+      row.className = `theme-item vtree-row${theme.id === current.id ? " active" : ""}${
+        sortModeActive ? " theme-item-sortable" : ""
+      }`;
+      row.style.paddingLeft = `${depth * 16}px`;
+
+      const arrow = document.createElement(hasInside ? "button" : "span");
+      arrow.className = "vtree-arrow";
+      if (hasInside) {
+        arrow.type = "button";
+        arrow.textContent = isOpen ? "\u25be" : "\u25b8";
+        arrow.setAttribute("aria-expanded", String(isOpen));
+        arrow.setAttribute("aria-label", `Show inside ${theme.name}`);
+        arrow.addEventListener("click", () => {
+          const now = readOpenFolders();
+          if (now.has(theme.id)) now.delete(theme.id);
+          else now.add(theme.id);
+          saveOpenFolders(now);
+          renderThemeTree();
+        });
+      }
+
+      const link = document.createElement("a");
+      link.className = "vtree-link";
+      link.href = `theme.html?id=${encodeURIComponent(theme.id)}`;
+      link.draggable = false;
+      if (theme.id === current.id) link.setAttribute("aria-current", "page");
+      if (sortModeActive) link.addEventListener("click", (e) => e.preventDefault());
+      const name = document.createElement("span");
+      name.textContent = theme.name;
+      const count = document.createElement("span");
+      count.className = "vtree-count";
+      count.textContent = theme.type === "folder" ? "" : String(Storage.getWords(theme.id).length);
+      link.append(name, count);
+
+      row.append(arrow, link);
+      if (sortModeActive) attachThemeDragHandlers(row, theme);
+      tree.appendChild(row);
+      if (hasInside && open.has(theme.id)) addRows(theme.id, depth + 1);
+    });
+  };
+  addRows(null, 0);
 }
 
 // ---- Sort mode: drag-to-reorder, and (holding a drag over another
@@ -1014,8 +1175,15 @@ function attachThemeDragHandlers(li, theme) {
     dragHeld = false;
   });
 
+  // Only neighbours (same parent) can be reordered or combined; the side
+  // bar shows every level, so this has to be checked here.
+  const isNeighbour = () => {
+    const source = Storage.getTheme(dragSourceThemeId);
+    return !!source && (source.parentId || null) === (theme.parentId || null);
+  };
+
   li.addEventListener("dragover", (e) => {
-    if (!dragSourceThemeId || dragSourceThemeId === theme.id) return;
+    if (!dragSourceThemeId || dragSourceThemeId === theme.id || !isNeighbour()) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     if (dragHoverTargetId === theme.id) return;
@@ -1048,12 +1216,13 @@ function attachThemeDragHandlers(li, theme) {
     const sourceId = dragSourceThemeId;
     const targetId = theme.id;
     const held = dragHeld;
+    const neighbour = !!sourceId && isNeighbour();
     li.classList.remove("drag-merge-target", "drag-hold-ready");
     clearDragHoverTimer();
     dragSourceThemeId = null;
     dragHoverTargetId = null;
     dragHeld = false;
-    if (!sourceId || sourceId === targetId) return;
+    if (!sourceId || sourceId === targetId || !neighbour) return;
     if (held) {
       // Held past the threshold -- open the merge/folder chooser now
       // that the native drag has fully concluded, instead of from
@@ -1851,7 +2020,7 @@ function renderWordList() {
 
   words.forEach((word) => {
     const li = document.createElement("li");
-    li.className = "word-item";
+    li.className = `word-item${word.id === openWordActionsId ? " open" : ""}`;
 
     if (word.id === editingWordId) {
       li.appendChild(buildWordEditForm(word));
@@ -1864,9 +2033,13 @@ function renderWordList() {
 
     const text = document.createElement("span");
     text.className = "word-label";
-    let label = `${word.english} — ${word.targetLang}`;
-    if (word.furigana) label += ` (${word.furigana})`;
-    text.textContent = label;
+    const target = document.createElement("span");
+    target.className = "word-target";
+    target.textContent = word.furigana ? `${word.targetLang} (${word.furigana})` : word.targetLang;
+    const meaning = document.createElement("span");
+    meaning.className = "word-english";
+    meaning.textContent = word.english;
+    text.append(target, meaning);
     main.appendChild(text);
 
     if (word.infinitive && word.infinitive.toLowerCase() !== word.targetLang.trim().toLowerCase()) {
@@ -1950,6 +2123,14 @@ function renderWordList() {
       deleteBtn.dataset.wordId = word.id;
       actions.appendChild(deleteBtn);
 
+      const moreBtn = document.createElement("button");
+      moreBtn.type = "button";
+      moreBtn.className = "word-more-btn";
+      moreBtn.textContent = "\u22ef";
+      moreBtn.dataset.wordId = word.id;
+      moreBtn.setAttribute("aria-label", `Options for ${word.targetLang}`);
+      moreBtn.setAttribute("aria-expanded", String(word.id === openWordActionsId));
+      li.appendChild(moreBtn);
       li.appendChild(actions);
     }
 
@@ -2398,6 +2579,12 @@ function handleSaveWordEdit(wordId, wrapper) {
 }
 
 function handleWordListClick(e) {
+  if (e.target.classList.contains("word-more-btn")) {
+    const id = e.target.dataset.wordId;
+    openWordActionsId = openWordActionsId === id ? null : id;
+    renderWordList();
+    return;
+  }
   if (e.target.classList.contains("delete-word-btn")) {
     Storage.deleteWord(e.target.dataset.wordId);
     renderWordList();
@@ -2511,10 +2698,10 @@ function renderQuizThemeCheckboxes() {
     input.type = "checkbox";
     input.value = theme.id;
     input.className = "quiz-theme-checkbox";
-    // Arrived here from a specific theme's "Test" bubble: default to just
-    // that one, but every theme is still listed in case you want to
-    // combine a quiz across more than one.
-    input.checked = activeTheme ? theme.id === activeTheme.id : true;
+    // Arrived from a theme's "Test this": default to it and everything
+    // inside it; every theme is still listed in case you want to combine
+    // more. From the home page's "Test", everything starts ticked.
+    input.checked = activeTheme ? Storage.isThemeDescendantOf(theme.id, activeTheme.id) : true;
     label.appendChild(input);
     label.appendChild(document.createTextNode(` ${theme.name} (${LANGUAGE_NAMES[theme.language]})`));
     container.appendChild(label);

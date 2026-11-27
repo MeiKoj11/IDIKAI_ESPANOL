@@ -57,18 +57,15 @@ section — `.wrap-focus`, `.focus-card`, `.select-pill`, `.source-row`,
 `.judge`, `.lookup-strip`, `.theme-chip`, `.loading-main`/`.spinner` — ported
 from a `test-mockup.css` covering conjugation-test/sentence-test screens.
 
-**Vocab Bank theme/folder tile style** (from a `VOCAB2909.html` mockup,
-2026-09-29): parchment card (`var(--card)` bg, `#7A5A45` border,
-`border-radius: 14px`), red Fahkwang title (`var(--red)`, weight 600,
-1.35rem), muted meta text (`rgba(34,23,18,0.6)`), lift + `3px 3px 0
-#7A5A45` shadow on hover/focus. Lives entirely in `idikai-refresh.css`
-under the `#theme-list > li.theme-item` rules (search that file for
-"parchment-card style") — no JS changes, since `js/vocab-app.js`'s
-`renderThemeList()` already puts the same `.theme-item`/`.theme-name`/
-`.theme-meta` classes on every tile it builds, on vocab.html and on a
-folder's own theme.html page alike, at any nesting depth. Reuse this
-same rule set for any future theme/folder tile work instead of
-re-deriving a style — just restyle those selectors.
+**Vocab Bank: slim list + side view** (replaced the old parchment tiles,
+2026-11): `vocab.html` is one slim list of themes with search; opening one
+(`theme.html`) shows a folder tree (`#theme-tree`) beside its sub-folders and
+word list. "Test" / "Test this" open `quiz.html` (a folder includes everything
+inside). Styles are the "Vocab Bank: slim list and side-by-side view" block at
+the end of `idikai-refresh.css` (`.vbtn`, `#theme-list.slim-list`, `.vtree-*`,
+`.vwords`). Both lists are built by `js/vocab-app.js` (`renderThemeList`,
+`renderThemeTree`); drag-sorting only combines neighbours (same parent). The
+app tab strip is now plain underline tabs on every page.
 
 ### The recurring CSS bug — READ THIS BEFORE ADDING A NEW BUTTON-BASED CLASS
 

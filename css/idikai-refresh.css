@@ -266,14 +266,15 @@ a:hover { color: var(--ink); text-decoration: underline; }
 }
 
 /* ---------- Tab strip -------------------------------------------------- */
+/* Quiet text tabs with a red underline on the open one. */
 
 .app-tab-strip {
   display: flex;
   align-items: flex-end;
   gap: 4px;
-  padding: 10px 20px 0;
+  padding: 0 20px;
   background: var(--paper);
-  border-bottom: 2px solid var(--ink);
+  border-bottom: 1px solid rgba(34, 23, 18, 0.18);
   overflow-x: auto;
 }
 .app-tab-strip-tabs { display: flex; align-items: flex-end; gap: 4px; }
@@ -283,25 +284,25 @@ a:hover { color: var(--ink); text-decoration: underline; }
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 44px;
+  box-sizing: border-box;
   font-family: "Nunito", sans-serif;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
-  color: var(--ink);
-  background: rgba(243, 238, 221, 0.45);
-  border: 2px solid var(--ink);
-  border-radius: 10px 10px 0 0;
-  padding: 9px 13px 11px;
-  margin-bottom: -2px;
-  opacity: 0.72;
+  color: #5C4B41;
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 3px 12px 0;
   cursor: pointer;
 }
-.app-tab-strip-tabs > *:hover { opacity: 1; }
+.app-tab-strip-tabs > *:hover { color: var(--red); text-decoration: none; }
 .app-tab-strip-tabs > [class*="active"],
 .app-tab-strip-tabs > [aria-current="page"] {
-  background: var(--card);
-  border-bottom-color: var(--card);
-  box-shadow: inset 0 3px 0 var(--accent);
-  opacity: 1;
+  color: var(--ink);
+  font-weight: 700;
+  border-bottom-color: var(--red);
 }
 .app-tab-strip-tabs button {
   background: transparent;
@@ -316,18 +317,16 @@ a:hover { color: var(--ink); text-decoration: underline; }
 
 .tab-bar-plus-btn {
   font-family: "Nunito", sans-serif;
-  font-size: 16px;
+  font-size: 20px;
   line-height: 1;
-  color: var(--ink);
+  color: #5C4B41;
   background: transparent;
-  border: 2px dashed rgba(34, 23, 18, 0.35);
-  border-bottom: none;
-  border-radius: 10px 10px 0 0;
-  padding: 9px 13px 11px;
-  margin-left: 4px;
+  border: 0;
+  width: 44px;
+  height: 44px;
   cursor: pointer;
 }
-.tab-bar-plus-btn:hover { border-color: var(--ink); }
+.tab-bar-plus-btn:hover { color: var(--red); }
 
 .app-tab-strip-add { position: relative; margin-left: auto; }
 .app-tab-picker-panel {
@@ -2731,158 +2730,6 @@ body.notebook-focus .notebook-save-status { position: fixed; right: 18px; bottom
 .word-select-checkbox { flex: 0 0 auto; margin-top: 3px; }
 
 /* ---------- Vocab Bank theme/folder tiles — parchment-card style ------- */
-/* Matches the VOCAB2909 mockup Mei supplied (2026-09-29). Scoped to
-   #theme-list, which js/vocab-app.js's renderThemeList() uses for every
-   tile it builds -- top-level themes on vocab.html, a folder's own
-   contents on theme.html (which mirrors vocab.html's layout, see
-   applyActiveThemeToUI), and any depth of sub-folder, since it's the
-   same shared function and the same .theme-item/.theme-name/.theme-meta
-   classes every time. So this one rule set is what "every theme and
-   folder, existing or new" actually resolves to -- no JS/id/behaviour
-   changes, purely a re-skin of the existing hooks. See CLAUDE.md for
-   the short pointer back to this block. */
-#themes-section {
-  background: var(--card);
-  border: 2px solid #6A3B21;
-  box-shadow: 4px 4px 0 rgba(34, 23, 18, 0.88);
-}
-#themes-section > h2 { color: var(--ink); }
-#themes-section > .hint { color: #4A3226; }
-#theme-list > li.theme-item {
-  background: var(--card);
-  border: 2px solid #7A5A45;
-  border-left: 2px solid #7A5A45;
-  border-radius: 14px;
-  box-shadow: none;
-  background-image: none;
-  color: var(--ink);
-  padding: 24px;
-  min-height: 120px;
-  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-}
-#theme-list > li.theme-item:hover,
-#theme-list > li.theme-item:focus-visible {
-  background: var(--card);
-  border-color: var(--red);
-  transform: translateY(-2px);
-  box-shadow: 3px 3px 0 #7A5A45;
-}
-#theme-list > li.theme-item:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 3px;
-}
-#theme-list > li.theme-item.lang-es,
-#theme-list > li.theme-item.lang-ja,
-#theme-list > li.theme-item.lang-fr {
-  border-left-color: #7A5A45;
-}
-#theme-list > li.theme-item.active {
-  background: var(--card);
-  border-color: var(--red);
-}
-#theme-list > li.theme-item-folder,
-#theme-list > li.theme-item-folder:hover {
-  background: var(--card);
-}
-#theme-list .theme-name {
-  background: none;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  padding-right: 28px;
-  align-self: stretch;
-  color: var(--red);
-  font-family: "Fahkwang", serif;
-  font-weight: 600;
-  font-size: 1.35rem;
-  line-height: 1.2;
-  letter-spacing: normal;
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
-/* Plain text now (renderThemeList() no longer builds separate
-   lang-badge/word-count-badge child spans here) -- no pill/chip
-   styling, just muted ink text matching the mockup's count line. */
-#theme-list .theme-meta {
-  display: block;
-  background: none;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  color: rgba(34, 23, 18, 0.6);
-  font-family: "Nunito", sans-serif;
-  font-size: 0.9rem;
-  font-weight: 400;
-}
-/* The "..." edit button sits at the tile's top-right corner, as in the
-   mockup, instead of flowing at the bottom of the card -- .theme-item
-   is already position:relative (see the generic .theme-list > li rule
-   above), so this just detaches the wrap from the flex flow. */
-#theme-list .theme-edit-wrap {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 2;
-}
-#theme-list .theme-edit-icon-btn {
-  background: transparent;
-  border: none;
-  color: rgba(34, 23, 18, 0.55);
-  padding: 2px 8px;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-#theme-list .theme-edit-icon-btn:hover {
-  background: transparent;
-  border-color: transparent;
-  color: var(--red);
-}
-/* The button moved to the top of the card, so its popover now opens
-   downward (top-anchored) instead of upward -- matches the mockup and
-   keeps it from popping off above the tile. */
-#theme-list .theme-edit-menu {
-  top: calc(100% + 5px);
-  bottom: auto;
-  right: 0;
-  background: var(--card);
-  border: 2px solid #7A5A45;
-  box-shadow: 3px 3px 0 #7A5A45;
-}
-#theme-list .theme-edit-menu button:hover {
-  background: #E4DCC4;
-}
-#theme-list .theme-edit-menu button.danger-option {
-  color: var(--red);
-}
-#theme-list .delete-theme-btn {
-  color: var(--card);
-  background: transparent;
-  border: none;
-  text-decoration: underline;
-}
-#theme-list .delete-theme-btn:hover {
-  color: var(--card);
-  background: var(--red);
-  border-color: var(--card);
-}
-#theme-list > li.theme-item.dragging {
-  opacity: 0.45;
-}
-#theme-list > li.theme-item.drag-merge-target {
-  outline-color: var(--red);
-}
-#theme-list > li.theme-item-add {
-  background: var(--card);
-  color: var(--red);
-  border: 2px dashed #7A5A45;
-  box-shadow: none;
-}
-#theme-list > li.theme-item-add:hover {
-  background: #E4DCC4;
-  border-color: #5C3220;
-  color: #5C3220;
-}
-
 /* ---------- Reading passage popups — secondary-button contrast fix ------ */
 /* #lookup-panel/#grammar-panel/#kanji-panel (passage.html) never migrated
    off style.css's dark #221712 background. button.secondary now defaults
@@ -3241,3 +3088,340 @@ textarea.entry-text-hl-input::selection { color: transparent; background: rgba(1
 .verb-picker-count { font-weight: 700; margin: 0.7rem 0 0.4rem; }
 .verb-picker-details summary { cursor: pointer; font-weight: 700; color: var(--red); }
 .verb-picker-buttons { display: flex; gap: 0.4rem; margin: 0.5rem 0; }
+
+/* ---------- Vocab Bank: slim list and side-by-side view ---------------- */
+/* vocab.html is one slim list of themes; opening one (theme.html) shows a
+   folder tree beside its words. */
+
+.vbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid #7A5A45;
+  border-radius: 10px;
+  font-family: "Nunito", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.vbtn:hover { background: transparent; color: var(--red); border-color: var(--red); text-decoration: none; }
+.vbtn[hidden], .vocab-form[hidden] { display: none; }
+.vbtn-red, .vbtn-red:hover { background: var(--red); border-color: var(--red); color: var(--card); }
+.vbtn-red:hover { background: #5A0C0D; }
+.vbtn-dashed { border-style: dashed; color: var(--red); }
+.vbtn-plain { border-color: transparent; align-self: flex-start; }
+#theme-sort-btn.vbtn.active, #theme-trash-btn.vbtn.active { background: #E4DCC4; color: var(--red); }
+
+.vocab-home-header, .vocab-home-main { max-width: 800px; }
+.vocab-home-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.vocab-home-header .back-link { flex-basis: 100%; }
+.vocab-title h1 { margin: 0; font-family: "Fahkwang", serif; font-size: 32px; color: var(--ink); }
+.vocab-summary { margin: 4px 0 0; font-size: 14px; color: #5C4B41; }
+.vocab-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; }
+.vocab-more { position: relative; }
+.vmenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 5px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid #7A5A45;
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 #7A5A45;
+}
+.vmenu[hidden] { display: none; }
+.vmenu > * {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: "Nunito", sans-serif;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.vmenu > *:hover { background: #E4DCC4; color: var(--ink); text-decoration: none; }
+
+.vocab-form { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.vocab-form input, .vocab-form select, input.theme-search[type="search"] {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid #7A5A45;
+  border-radius: 10px;
+  font-family: "Nunito", sans-serif;
+  font-size: 15px;
+}
+.vocab-form select[hidden] { display: none; }
+input.theme-search[type="search"] { width: 100%; margin-bottom: 14px; }
+.sort-hint {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px dashed var(--red);
+  border-radius: 10px;
+  font-size: 14px;
+}
+.sort-hint[hidden] { display: none; }
+
+#theme-list.slim-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  background: var(--card);
+  border: 1px solid #7A5A45;
+  border-radius: 14px;
+}
+#theme-list.slim-list:empty { display: none; }
+#theme-list.slim-list > li {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 6px 60px 6px 16px;
+  background: transparent;
+  background-image: none;
+  color: var(--ink);
+  border: 0;
+  border-bottom: 1px solid rgba(122, 90, 69, 0.28);
+  border-radius: 0;
+  box-shadow: none;
+  transform: none;
+  cursor: pointer;
+}
+#theme-list.slim-list > li:first-child { border-radius: 14px 14px 0 0; }
+#theme-list.slim-list > li:last-child { border-bottom: 0; border-radius: 0 0 14px 14px; }
+#theme-list.slim-list > li:only-child { border-radius: 14px; }
+#theme-list.slim-list > li:hover { background: #E7DFC8; }
+#theme-list.slim-list > li:focus-visible { outline: 2px solid var(--red); outline-offset: -2px; }
+#theme-list.slim-list > li.empty-hint { padding-right: 16px; cursor: default; font-size: 14px; color: #5C4B41; }
+#theme-list.slim-list .theme-icon { display: flex; align-self: center; margin: 0; padding: 0; border: 0; background: none; color: var(--red); }
+#theme-list.slim-list .theme-name {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font-family: "Fahkwang", serif;
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+#theme-list.slim-list .theme-meta {
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #5C4B41;
+  font-size: 14px;
+  letter-spacing: normal;
+  text-align: right;
+}
+#theme-list.slim-list .theme-edit-wrap { position: absolute; right: 8px; top: 6px; align-self: auto; }
+#theme-list.slim-list .theme-edit-icon-btn {
+  position: static;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #5C4B41;
+  font-size: 18px;
+}
+#theme-list.slim-list .theme-edit-icon-btn:hover { color: var(--red); }
+.slim-list .theme-edit-menu, #theme-edit-menu {
+  top: calc(100% + 4px);
+  bottom: auto;
+  right: 0;
+  background: var(--card);
+  border: 1px solid #7A5A45;
+  box-shadow: 3px 3px 0 #7A5A45;
+  min-width: 160px;
+}
+#theme-list.slim-list .theme-edit-menu button, #theme-edit-menu button {
+  position: static;
+  width: auto;
+  min-height: 40px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+#theme-list.slim-list .theme-edit-menu button:hover, #theme-edit-menu button:hover { background: #E4DCC4; }
+#theme-list.slim-list .theme-edit-menu button.danger-option, #theme-edit-menu button.danger-option { color: var(--red); }
+#theme-list.slim-list > li.theme-item-sortable, .vtree-row.theme-item-sortable { cursor: grab; }
+#theme-list.slim-list > li.theme-item-sortable::after { content: "\2261"; position: absolute; left: 3px; color: var(--red); }
+#theme-list.slim-list > li.dragging, .vtree-row.dragging { opacity: 0.45; }
+#theme-list.slim-list > li.drag-merge-target, .vtree-row.drag-merge-target { outline: 2px solid var(--red); outline-offset: -2px; }
+#theme-list.slim-list > li.drag-hold-ready, .vtree-row.drag-hold-ready { outline: 3px solid #B8860B; outline-offset: -3px; }
+
+/* Side by side */
+.vsplit { display: flex; flex-wrap: wrap; align-items: stretch; min-height: calc(100vh - 110px); }
+.vside {
+  flex: 1 1 260px;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 14px;
+  border-right: 1px solid rgba(122, 90, 69, 0.4);
+}
+.vtree { display: flex; flex-direction: column; gap: 2px; max-height: 60vh; overflow-y: auto; }
+.theme-item.vtree-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: none;
+  gap: 0;
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ink);
+  box-shadow: none;
+  transform: none;
+}
+.theme-item.vtree-row:hover { background: #E4DCC4; transform: none; box-shadow: none; }
+.theme-item.vtree-row.active { background: var(--red); color: var(--card); }
+.vtree-arrow {
+  flex: none;
+  width: 32px;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: 14px;
+}
+button.vtree-arrow { cursor: pointer; }
+button.vtree-arrow:hover { background: transparent; color: inherit; }
+.vtree-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-right: 12px;
+  color: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.vtree-link:hover { color: inherit; text-decoration: none; }
+.vtree-count { font-size: 13px; font-weight: 400; }
+.vside-foot {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(122, 90, 69, 0.4);
+}
+main.vmain {
+  flex: 999 1 520px;
+  min-width: 0;
+  max-width: 900px;
+  margin: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 32px 72px;
+}
+.vmain > .back-link { align-self: flex-start; }
+.vmain .breadcrumb-trail { flex: none; order: 0; color: #5C4B41; font-size: 13px; }
+.vmain .breadcrumb-trail a { color: #5C4B41; }
+.vmain .breadcrumb-trail a:hover, .vmain .breadcrumb-current { color: var(--red); }
+.vmain-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.vmain-head h1 { color: var(--red); overflow-wrap: anywhere; }
+.vmain .theme-edit-wrap { align-self: auto; }
+.vmain .subfolder-section { margin: 0; }
+.vadd-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+
+/* The word list, on the side view and on add-vocab.html */
+.vwords {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid #7A5A45;
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+.vwords[hidden] { display: none; }
+.vwords h2 { font-size: 20px; color: var(--ink); }
+.vwords .hint, .vwords .word-list-sort-label { color: #5C4B41; }
+#word-list { gap: 0; }
+#word-list > li.word-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid rgba(122, 90, 69, 0.25);
+  border-radius: 0;
+}
+#word-list > li.word-item:hover { background: transparent; }
+#word-list .word-left { flex: 1; align-items: center; gap: 12px; }
+#word-list .word-main { flex: 1; }
+#word-list .word-label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+#word-list .word-target { font-weight: 700; color: var(--ink); }
+#word-list .word-english { color: #5C4B41; }
+#word-list .word-example, #word-list .word-infinitive { color: #5C4B41; font-size: 13px; }
+#word-list > li button.word-more-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 18px;
+  text-decoration: none;
+}
+#word-list > li .word-actions { display: none; width: 100%; justify-content: flex-end; }
+#word-list > li.open .word-actions { display: flex; }
+#word-list > li .word-actions button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #7A5A45;
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  text-decoration: none;
+}
+.vwords .word-list-sort-label select, .vwords .bulk-import-theme-select {
+  min-height: 40px;
+  padding: 0 10px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid #7A5A45;
+  border-radius: 10px;
+}
+.vwords .bulk-import-review-actions button { border: 1px solid #7A5A45; border-radius: 10px; color: var(--ink); }
+.vwords .bulk-import-review-actions button:hover { color: var(--red); border-color: var(--red); }

@@ -78,14 +78,26 @@
       </div>
     </div>
   </div>
-  <header class="app-header">
+  <header class="app-header vocab-home-header">
     <a href="index.html" class="back-link" id="vocab-back-link" data-immersion-key="backPlain">&larr; Back</a>
-    <h1 data-immersion-key="sectionVocab">Vocab Bank</h1>
-    <button type="button" class="howto-btn" id="vocab-howto-btn" data-howto-trigger="vocab-howto-overlay" aria-haspopup="dialog" data-immersion-key="howtoButton">How to use</button>
-    <button type="button" id="theme-undo-btn" class="howto-btn header-right-btn" hidden>Undo</button>
-    <button type="button" id="theme-sort-btn" class="howto-btn header-right-btn">Sort</button>
-    <button type="button" id="theme-trash-btn" class="howto-btn header-right-btn" data-immersion-key="recentlyRemovedButton">Recently removed</button>
-    <a href="add-random-vocab.html" id="add-random-vocab-link" class="howto-btn header-right-btn" data-immersion-key="addRandomVocabButton">+ Add random vocab</a>
+    <div class="vocab-title">
+      <h1 data-immersion-key="sectionVocab">Vocab Bank</h1>
+      <p id="vocab-summary" class="vocab-summary"></p>
+    </div>
+    <div class="vocab-actions">
+      <a href="quiz.html" id="vocab-test-link" class="vbtn vbtn-red" data-immersion-key="testTitle">Test</a>
+      <button type="button" id="theme-undo-btn" class="vbtn" hidden>Undo</button>
+      <button type="button" id="theme-sort-btn" class="vbtn">Sort</button>
+      <button type="button" id="new-theme-toggle" class="vbtn" aria-expanded="false" data-immersion-key="newThemeButton">+ New theme</button>
+      <div class="vocab-more">
+        <button type="button" id="vocab-more-btn" class="vbtn" aria-label="More options" aria-expanded="false">&#8943;</button>
+        <div id="vocab-more-menu" class="vmenu" hidden>
+          <a href="add-random-vocab.html" id="add-random-vocab-link" data-immersion-key="addRandomVocabButton">+ Add random vocab</a>
+          <button type="button" id="theme-trash-btn" data-immersion-key="recentlyRemovedButton">Recently removed</button>
+          <button type="button" id="vocab-howto-btn" data-howto-trigger="vocab-howto-overlay" aria-haspopup="dialog" data-immersion-key="howtoButton">How to use</button>
+        </div>
+      </div>
+    </div>
   </header>
   <div id="theme-trash-panel" class="theme-trash-panel" hidden>
     <div class="theme-trash-panel-head">
@@ -105,19 +117,17 @@
       </div>
     </div>
   </div>
-  <main>
-    <section class="panel" id="themes-section">
-      <h2 data-immersion-key="themesHeading">Themes</h2>
-      <p class="hint" data-immersion-key="themesHint">Themes are your folders — e.g. "School", "Verbs", "Food". Click a theme to open it.</p>
-      <form id="new-theme-form" class="inline-form">
-        <input type="text" id="new-theme-name" placeholder="Theme name" required data-immersion-key="themeNamePlaceholder" />
-        <select id="new-theme-language">
-          <option value="es" data-immersion-key="langNameEs">Spanish</option>
-        </select>
-        <button type="submit" data-immersion-key="addThemeButton">Add theme</button>
-      </form>
-      <ul id="theme-list" class="theme-list"></ul>
-    </section>
+  <main class="vocab-home-main">
+    <form id="new-theme-form" class="inline-form vocab-form" hidden>
+      <input type="text" id="new-theme-name" placeholder="Theme name" required data-immersion-key="themeNamePlaceholder" />
+      <select id="new-theme-language" hidden>
+        <option value="es" data-immersion-key="langNameEs">Spanish</option>
+      </select>
+      <button type="submit" class="vbtn vbtn-red" data-immersion-key="addThemeButton">Add theme</button>
+    </form>
+    <p id="theme-sort-hint" class="sort-hint" hidden data-immersion-key="sortHint">Drag a row to reorder. Hold it over another to merge them or put them in a folder.</p>
+    <input type="search" id="theme-search" class="theme-search" aria-label="Search themes" placeholder="Search themes and sub-folders" data-immersion-key="searchThemesPlaceholder" />
+    <ul id="theme-list" class="theme-list slim-list"></ul>
   </main>
   <div id="theme-merge-modal" class="theme-merge-modal" hidden></div>
   <script src="js/topbar.js"></script>

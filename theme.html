@@ -78,85 +78,98 @@
       </div>
     </div>
   </div>
-  <header class="app-header">
-    <a href="vocab.html" class="back-link" id="theme-back-link" data-immersion-key="backOneLevel">&larr; Back</a>
-    <nav id="theme-breadcrumb" class="breadcrumb-trail" aria-label="Folder path"></nav>
-    <h1 id="theme-hub-heading">Theme</h1>
-    <div class="theme-header-actions">
-      <button type="button" id="theme-undo-btn" class="secondary" hidden>Undo</button>
-      <button type="button" id="theme-sort-btn" class="secondary">Sort</button>
-      <button type="button" id="theme-trash-btn" class="secondary" data-immersion-key="recentlyRemovedButton">Recently removed</button>
-      <a href="#" id="theme-add-random-vocab-link" class="secondary" data-immersion-key="addRandomVocabButton">+ Add random vocab</a>
-      <div class="theme-edit-wrap">
-        <button
-          type="button"
-          id="theme-edit-btn"
-          class="secondary theme-edit-icon-btn"
-          aria-label="Edit this theme"
-          aria-haspopup="true"
-        >
-          ⋯
-        </button>
-        <div id="theme-edit-menu" class="theme-edit-menu" hidden></div>
+  <div class="vsplit">
+    <aside class="vside" aria-label="Themes">
+      <a href="vocab.html?lang=es" class="vbtn vbtn-plain" id="theme-all-link" data-immersion-key="allThemes">&larr; All themes</a>
+      <nav id="theme-tree" class="vtree" aria-label="Theme folders"></nav>
+      <div class="vside-foot">
+        <button type="button" id="theme-sort-btn" class="vbtn">Sort</button>
+        <button type="button" id="theme-undo-btn" class="vbtn" hidden>Undo</button>
+        <button type="button" id="theme-trash-btn" class="vbtn" data-immersion-key="recentlyRemovedButton">Recently removed</button>
+        <a href="#" id="theme-add-random-vocab-link" class="vbtn" data-immersion-key="addRandomVocabButton">+ Add random vocab</a>
       </div>
-    </div>
-  </header>
-  <div id="theme-links"></div>
-  <div id="theme-trash-panel" class="theme-trash-panel" hidden>
-    <div class="theme-trash-panel-head">
-      <h2 data-immersion-key="recentlyRemovedHeading">Recently removed</h2>
-      <p class="hint" data-immersion-key="recentlyRemovedHint">Merged or deleted themes stay here for about 30 days before being purged for good.</p>
-    </div>
-    <ul id="theme-trash-list" class="theme-list"></ul>
-  </div>
-  <main>
-    <div class="bubble-grid" id="theme-vocab-bubbles">
-      <a class="bubble" id="theme-hub-add-link" href="#">
-        <span class="bubble-title" data-immersion-key="addNewVocabTitle">Add New Vocab</span>
-        <span class="bubble-sub" data-immersion-key="addNewVocabSub">Add words, and see everything saved in this theme</span>
-      </a>
-      <a class="bubble" id="theme-hub-test-link" href="#">
-        <span class="bubble-title" data-immersion-key="testTitle">Test</span>
-        <span class="bubble-sub" id="theme-hub-test-sub" data-immersion-key="testSub">Flashcard quiz or verb conjugation practice</span>
-      </a>
-      <a class="bubble bubble-span-full" id="theme-hub-view-link" href="#">
-        <span class="bubble-title" data-immersion-key="viewVocabTitle">View Vocab</span>
-        <span class="bubble-sub" data-immersion-key="viewVocabSub">See everything already saved in this theme</span>
-      </a>
-    </div>
+      <p id="theme-sort-hint" class="sort-hint" hidden data-immersion-key="sortHint">Drag a row to reorder. Hold it over another to merge them or put them in a folder.</p>
+    </aside>
 
-    <section class="subfolder-section" id="theme-sublist-panel">
-      <div id="subfolder-heading-block">
-        <h2 class="subfolder-heading" id="subfolder-heading" data-immersion-key="subfoldersHeading">Sub-folders</h2>
+    <main class="vmain">
+      <a href="vocab.html" class="back-link" id="theme-back-link" data-immersion-key="backOneLevel">&larr; Back</a>
+      <nav id="theme-breadcrumb" class="breadcrumb-trail" aria-label="Folder path"></nav>
+      <div class="vmain-head">
+        <div class="vocab-title">
+          <h1 id="theme-hub-heading">Theme</h1>
+          <p id="theme-detail" class="vocab-summary"></p>
+        </div>
+        <div class="theme-header-actions vocab-actions">
+          <a href="#" id="theme-hub-test-link" class="vbtn vbtn-red" data-immersion-key="testThisButton">Test this</a>
+          <a href="#" id="theme-hub-add-link" class="vbtn" data-immersion-key="addVocabButtonShort">+ Add vocab</a>
+          <div class="theme-edit-wrap">
+            <button type="button" id="theme-edit-btn" class="vbtn" aria-label="Rename, copy or delete" aria-haspopup="true">&#8943;</button>
+            <div id="theme-edit-menu" class="theme-edit-menu" hidden></div>
+          </div>
+        </div>
       </div>
-      <div id="folder-heading-block" hidden>
-        <h2 data-immersion-key="themesHeading">Themes</h2>
-        <p class="hint" data-immersion-key="themesHint">Themes are your folders — e.g. "School", "Verbs", "Food". Click a theme to open it.</p>
+      <div id="theme-links"></div>
+      <div id="theme-trash-panel" class="theme-trash-panel" hidden>
+        <div class="theme-trash-panel-head">
+          <h2 data-immersion-key="recentlyRemovedHeading">Recently removed</h2>
+          <p class="hint" data-immersion-key="recentlyRemovedHint">Merged or deleted themes stay here for about 30 days before being purged for good.</p>
+        </div>
+        <ul id="theme-trash-list" class="theme-list"></ul>
       </div>
-      <form id="new-subfolder-form" class="inline-form">
-        <input
-          type="text"
-          id="new-subfolder-name"
-          placeholder="New sub-folder name"
-          required
-          data-immersion-key="subfolderNamePlaceholder"
-        />
-        <button type="submit" data-immersion-key="createFolderButton">Create folder</button>
-      </form>
-      <form id="add-existing-theme-form" class="inline-form" hidden>
-        <select id="add-existing-theme-select"></select>
-        <button type="submit" data-immersion-key="addExistingThemeButton">Add to this folder</button>
-      </form>
-      <form id="new-theme-form" class="inline-form" hidden>
-        <input type="text" id="new-theme-name" placeholder="Theme name" required data-immersion-key="themeNamePlaceholder" />
-        <select id="new-theme-language">
-          <option value="es" data-immersion-key="langNameEs">Spanish</option>
-        </select>
-        <button type="submit" data-immersion-key="addThemeButton">Add theme</button>
-      </form>
-      <ul id="theme-list" class="theme-list"></ul>
-    </section>
-  </main>
+
+      <section class="subfolder-section" id="theme-sublist-panel" aria-label="Folders inside">
+        <div class="vadd-row">
+          <button type="button" id="new-subfolder-toggle" class="vbtn vbtn-dashed" aria-expanded="false" data-immersion-key="newSubfolderButton">+ New sub-folder</button>
+          <button type="button" id="new-theme-toggle" class="vbtn vbtn-dashed" aria-expanded="false" data-immersion-key="newThemeButton" hidden>+ New theme</button>
+          <button type="button" id="add-existing-toggle" class="vbtn vbtn-dashed" aria-expanded="false" data-immersion-key="addExistingButton" hidden>Add existing theme</button>
+        </div>
+        <form id="new-subfolder-form" class="inline-form vocab-form" hidden>
+          <input type="text" id="new-subfolder-name" placeholder="New sub-folder name" required data-immersion-key="subfolderNamePlaceholder" />
+          <button type="submit" class="vbtn vbtn-red" data-immersion-key="createFolderButton">Create folder</button>
+        </form>
+        <form id="new-theme-form" class="inline-form vocab-form" hidden>
+          <input type="text" id="new-theme-name" placeholder="Theme name" required data-immersion-key="themeNamePlaceholder" />
+          <select id="new-theme-language" hidden>
+            <option value="es" data-immersion-key="langNameEs">Spanish</option>
+          </select>
+          <button type="submit" class="vbtn vbtn-red" data-immersion-key="addThemeButton">Add theme</button>
+        </form>
+        <form id="add-existing-theme-form" class="inline-form vocab-form" hidden>
+          <select id="add-existing-theme-select" aria-label="Theme to add"></select>
+          <button type="submit" class="vbtn vbtn-red" data-immersion-key="addExistingThemeButton">Add to this folder</button>
+        </form>
+        <ul id="theme-list" class="theme-list slim-list"></ul>
+      </section>
+
+      <section class="vwords" id="word-list-panel">
+        <div class="word-list-panel-header">
+          <h2><span data-immersion-key="wordsHeadingPrefix">Words —</span> <span id="active-theme-name-2"></span></h2>
+          <label class="word-list-sort-label">
+            <span data-immersion-key="sortByLabel">Sort by</span>
+            <select id="word-list-sort-select">
+              <option value="newest" data-immersion-key="sortNewestOption">Newest first</option>
+              <option value="target-az" data-immersion-key="sortTargetAzOption">A–Z (target language)</option>
+              <option value="english-az" data-immersion-key="sortEnglishAzOption">A–Z (English)</option>
+            </select>
+          </label>
+        </div>
+        <div class="bulk-import-review-header" id="word-list-bulk-bar" hidden>
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="word-select-all-checkbox" />
+            <span data-immersion-key="selectAllButton">Select all</span>
+          </label>
+          <span id="word-bulk-selected-count" class="hint"></span>
+          <div class="bulk-import-review-actions">
+            <select id="word-bulk-theme-select" class="bulk-import-theme-select" aria-label="Move/copy selected to"></select>
+            <button type="button" id="word-bulk-move-btn" class="secondary" data-immersion-key="moveSelectedButton">Move selected</button>
+            <button type="button" id="word-bulk-copy-btn" class="secondary" data-immersion-key="copySelectedButton">Copy selected</button>
+          </div>
+        </div>
+        <p id="word-bulk-status" class="hint" hidden></p>
+        <ul id="word-list" class="word-list"></ul>
+      </section>
+    </main>
+  </div>
   <div id="theme-merge-modal" class="theme-merge-modal" hidden></div>
   <script src="js/topbar.js"></script>
   <script src="js/immersion.js"></script>
