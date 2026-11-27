@@ -310,16 +310,29 @@
     if (!findVerb(infinitive)) savedVerbs.set(infinitive, verbFromDictionary(infinitive, "", packed));
   }
 
-  // Test-ready verbs for the learner's saved words. A word the dictionary
-  // doesn't know is left out rather than guessed at.
+  // The infinitive a saved word stands for: the one remembered on it
+  // (older saves wrote "comer (to eat)"), else the word itself.
+  function savedInfinitive(word) {
+    const remembered = String(word.infinitive || "").replace(/\(.*$/, "").trim();
+    return (remembered || word.targetLang || "").trim().toLowerCase();
+  }
+
+  // Test-ready verbs for the learner's saved words, one per infinitive. A
+  // verb the dictionary doesn't know is left out rather than guessed at.
   function verbsForSavedWords(words) {
     const seen = new Set();
     const verbs = [];
     words.forEach((w) => {
-      const verb = findVerb(w.targetLang);
+      const name = savedInfinitive(w);
+      const verb = findVerb(name);
       if (!verb || seen.has(verb.infinitive)) return;
+      // The card's own English only describes the infinitive if the card
+      // IS the infinitive ("comí" is saved as "I ate").
+      const isInfinitiveCard = (w.targetLang || "").trim().toLowerCase() === name;
+      const english = w.infinitiveEnglish || (isInfinitiveCard ? w.english : "") || verb.english;
+      if (!english) return;
       seen.add(verb.infinitive);
-      verbs.push(Object.assign({}, verb, { english: w.english || verb.english, fromVocab: true }));
+      verbs.push(Object.assign({}, verb, { english, fromVocab: true }));
     });
     return verbs;
   }
@@ -392,6 +405,7 @@
     addDictionaryVerb,
     verbFromDictionary,
     verbsForSavedWords,
+    savedInfinitive,
     VERBS,
     TENSE_KEYS,
     TENSE_LABELS,

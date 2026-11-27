@@ -3170,3 +3170,60 @@ textarea.entry-text-hl-input::selection { color: transparent; background: rgba(1
 .reference-text-title { font-weight: 700; }
 .reference-text-body { resize: vertical; line-height: 1.5; }
 .reference-text-delete { margin-top: 2px; }
+
+/* ---- "Is this a verb?" card (js/verb-recognition.js) ---- */
+.verb-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3000;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 60vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  background: var(--card);
+  color: var(--ink);
+  border: 3px solid var(--red);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  font-family: "Nunito", sans-serif;
+  font-size: 0.95rem;
+}
+.verb-panel-close {
+  float: right;
+  background: transparent;
+  color: var(--red);
+  border: 0;
+  padding: 0 0 0 10px;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.verb-panel-item + .verb-panel-item { border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 12px; }
+.verb-panel-item p { margin: 0 0 8px; }
+.verb-panel-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  font: inherit;
+}
+.verb-panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.verb-panel-btn {
+  background: var(--red);
+  color: var(--paper);
+  border: 2px solid var(--red);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: "Nunito", sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.verb-panel-btn-quiet { background: var(--card); color: var(--red); }
+.verb-panel-btn:disabled { opacity: 0.6; cursor: default; }

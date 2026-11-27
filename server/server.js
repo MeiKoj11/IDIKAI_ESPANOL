@@ -1646,6 +1646,44 @@ function getVerbDictionary(lang) {
   return verbDictionaries[lang];
 }
 
+// Which dictionary verbs a set of typed words could be: the word may be
+// an infinitive, a single form ("comí"), or a haber compound ("he
+// comido"). Exact spelling only, accents included -- never a guess. One
+// pass over the dictionary, so no large reverse index is kept in memory.
+function identifyVerbs(dictionary, words) {
+  const results = {};
+  const wanted = new Map(); // single form or participle -> words asking
+  const want = (form, word) => wanted.set(form, (wanted.get(form) || []).concat(word));
+  const haberForms = new Set((dictionary.haber || "").split(";").slice(0, 54));
+  words.forEach((word) => {
+    results[word] = { isInfinitive: Object.prototype.hasOwnProperty.call(dictionary, word), infinitives: [], irregular: false };
+    if (results[word].isInfinitive) results[word].irregular = dictionary[word].endsWith(";1");
+    const compound = word.match(/^(?:(me|te|se|nos|os) )?(\S+) (\S+)$/);
+    if (compound && haberForms.has(compound[2])) {
+      want(`participle:${compound[1] ? "se:" : ""}${compound[3]}`, word);
+    } else {
+      want(word, word);
+    }
+  });
+  const irregularVerbs = new Set();
+  Object.keys(dictionary).forEach((infinitive) => {
+    const cells = dictionary[infinitive].split(";");
+    if (cells[67] === "1") irregularVerbs.add(infinitive);
+    const participle = `participle:${infinitive.endsWith("se") ? "se:" : ""}${cells[66]}`;
+    cells.slice(0, 66).concat(participle).forEach((form) => {
+      (wanted.get(form) || []).forEach((word) => {
+        if (!results[word].infinitives.includes(infinitive)) results[word].infinitives.push(infinitive);
+      });
+    });
+  });
+  Object.values(results).forEach((r) => {
+    // Shortest first puts the everyday verb ahead of its compounds.
+    r.infinitives = r.infinitives.sort((a, b) => a.length - b.length).slice(0, 4);
+    r.irregularInfinitives = r.infinitives.filter((v) => irregularVerbs.has(v));
+  });
+  return results;
+}
+
 function sendJSON(res, statusCode, body) {
   res.writeHead(statusCode, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -1743,6 +1781,22 @@ function handleApiRoute(req, res, url) {
       if (Object.prototype.hasOwnProperty.call(dictionary, name)) verbs[name] = dictionary[name];
     });
     sendJSON(res, 200, { verbs });
+    return true;
+  }
+
+  // ---- POST /api/verbs/identify { lang, words: [] } ----
+  if (url.pathname === "/api/verbs/identify" && req.method === "POST") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    readJSONBody(req, 50 * 1024)
+      .then(({ lang, words }) => {
+        if (lang !== "es" || !Array.isArray(words)) return sendJSON(res, 400, { error: "Expected lang \"es\" and a list of words." });
+        const dictionary = getVerbDictionary("es");
+        if (!dictionary.haber) return sendJSON(res, 500, { error: "Verb dictionary unavailable." });
+        const list = words.slice(0, 200).filter((w) => typeof w === "string" && w.length <= 60);
+        sendJSON(res, 200, { results: identifyVerbs(dictionary, list) });
+      })
+      .catch((err) => sendJSON(res, 400, { error: err.message }));
     return true;
   }
 

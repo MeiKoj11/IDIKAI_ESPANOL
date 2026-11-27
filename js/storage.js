@@ -545,6 +545,15 @@ function updateWord(wordId, updates) {
   return word;
 }
 
+// Several words changed at once, saved in one write: { wordId: updates }.
+function updateWords(updatesById) {
+  const words = readJSON(STORAGE_KEYS.words, []);
+  words.forEach((w) => {
+    if (updatesById[w.id]) Object.assign(w, updatesById[w.id]);
+  });
+  writeJSON(STORAGE_KEYS.words, words);
+}
+
 function deleteWord(wordId) {
   const words = readJSON(STORAGE_KEYS.words, []).filter((w) => w.id !== wordId);
   writeJSON(STORAGE_KEYS.words, words);
@@ -584,7 +593,11 @@ function isDuplicateWord(themeId, word, excludeId) {
 // the Reading page's "add this looked-up word" button.
 function addWordIfNotDuplicate(themeId, word, excludeId) {
   if (isDuplicateWord(themeId, word, excludeId)) return null;
-  return addWord({ themeId, ...word });
+  const saved = addWord({ themeId, ...word });
+  // Every "save to vocab" in the app comes through here, so this is where
+  // a Spanish verb gets recognised (see verb-recognition.js).
+  if (typeof VerbRecognition !== "undefined") VerbRecognition.checkLater(saved.id);
+  return saved;
 }
 
 // Moves a word to a different theme (e.g. it was filed under the wrong
@@ -1784,6 +1797,7 @@ const Storage = {
   updateWord,
   deleteWord,
   getVerbWords,
+  updateWords,
   isDuplicateWord,
   addWordIfNotDuplicate,
   moveWordToTheme,

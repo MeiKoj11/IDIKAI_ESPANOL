@@ -10,7 +10,7 @@
 (function () {
   const missing = Array.from(new Set(
     Storage.getVerbWords("es")
-      .map((w) => (w.targetLang || "").trim().toLowerCase())
+      .map(SpanishConjugator.savedInfinitive)
       .filter((v) => /(ar|er|ir|ír)(se)?$/.test(v) && !/\s/.test(v) && !SpanishConjugator.findVerb(v))
   ));
   for (let i = 0; i < missing.length; i += 100) {

@@ -1289,6 +1289,7 @@ async function handleAddWordSubmit(e) {
       word.partOfSpeech = pendingVerbInfo.partOfSpeech;
       if (pendingVerbInfo.verbClass) word.verbClass = pendingVerbInfo.verbClass;
       if (pendingVerbInfo.verbType) word.verbType = pendingVerbInfo.verbType;
+      if (pendingVerbInfo.infinitive) word.infinitive = pendingVerbInfo.infinitive;
     }
     pendingVerbInfo = null;
     saveWordAndReset(word);
@@ -1376,6 +1377,11 @@ async function handleAddWordSubmit(e) {
       query: (english ? filledValue : tl).toLowerCase(),
       partOfSpeech: result.partOfSpeech,
       verbType: result.verbType,
+      // "comí" was looked up: remember it comes from "comer (to eat)".
+      infinitive:
+        result.conjugationInfo && result.conjugationInfo.infinitive
+          ? `${result.conjugationInfo.infinitive} (${result.conjugationInfo.infinitiveEnglish || ""})`
+          : "",
     };
   } else {
     pendingVerbInfo = null;
@@ -1519,7 +1525,15 @@ function handleUseTranslationOnly() {
   const english = buildDetectionGloss(match);
   const exampleInput = document.getElementById("field-example");
   const exampleSentence = exampleInput ? exampleInput.value.trim() : "";
-  saveWordAndReset({ english, targetLang: pendingDetection.typedForm, furigana: "", exampleSentence });
+  const verb = SpanishConjugator.findVerb(match.infinitive);
+  saveWordAndReset({
+    english,
+    targetLang: pendingDetection.typedForm,
+    furigana: "",
+    exampleSentence,
+    partOfSpeech: "verb",
+    infinitive: `${verb.infinitive} (${verb.english})`,
+  });
 }
 
 function handleGenerateTable() {
@@ -1855,7 +1869,7 @@ function renderWordList() {
     text.textContent = label;
     main.appendChild(text);
 
-    if (word.infinitive) {
+    if (word.infinitive && word.infinitive.toLowerCase() !== word.targetLang.trim().toLowerCase()) {
       const infinitive = document.createElement("span");
       infinitive.className = "word-infinitive";
       infinitive.textContent = `dictionary form: ${word.infinitive}`;
@@ -2363,7 +2377,22 @@ function handleSaveWordEdit(wordId, wrapper) {
     }
   }
 
+  const before = Storage.getWords().find((w) => w.id === wordId);
+  const wordChanged = before && before.targetLang !== targetLang;
+  if (wordChanged) {
+    // A different word: what was remembered about the old one no longer applies.
+    updates.infinitive = "";
+    updates.infinitiveEnglish = "";
+    updates.verbCheck = undefined;
+  } else if (before && before.partOfSpeech === "verb" && updates.partOfSpeech === null) {
+    // Un-ticked "This is a verb": don't ask or tag it again.
+    updates.infinitive = "";
+    updates.infinitiveEnglish = "";
+    updates.verbCheck = "no";
+  }
+
   Storage.updateWord(wordId, updates);
+  if (wordChanged && typeof VerbRecognition !== "undefined") VerbRecognition.checkLater(wordId);
   editingWordId = null;
   renderWordList();
 }

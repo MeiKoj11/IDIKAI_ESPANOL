@@ -189,9 +189,14 @@ this file and `git log` are the project's shared memory across sessions.
   tests, never guessed. After any change run `node scripts/check-spanish-verbs.js`.
 - The original hand-picked verbs still use the rules in `spanish-conjugator.js`;
   form detection while adding vocab uses only those.
-- Still to do: (2) always store a saved word's infinitive from every save path,
-  optional separate infinitive card, backfill old words; (3) test picker for
-  common / saved / both and regular / irregular.
+- `js/verb-recognition.js` (loaded after storage.js on every page) records a
+  saved word's infinitive: `Storage.addWordIfNotDuplicate` calls it, and older
+  words are checked on page load. It asks when unsure; `word.verbCheck` is
+  "yes" / "no" / "none", unset = still to check. Rules are in `decide()`;
+  check them with `node scripts/check-verb-recognition.js`. New save paths
+  must go through `addWordIfNotDuplicate`.
+- Still to do: (3) test picker for common / saved / both and regular /
+  irregular.
 
 ## File-naming conventions worth knowing
 
