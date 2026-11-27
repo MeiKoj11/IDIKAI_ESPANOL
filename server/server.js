@@ -1631,6 +1631,21 @@ function clearSessionCookie(res, req) {
   res.setHeader("Set-Cookie", parts.join("; "));
 }
 
+// The verb dictionaries built by scripts/build-spanish-verbs.js: about
+// 10MB, so read once, on the first request that needs it.
+const verbDictionaries = {};
+function getVerbDictionary(lang) {
+  if (!verbDictionaries[lang]) {
+    try {
+      verbDictionaries[lang] = JSON.parse(fs.readFileSync(path.join(__dirname, "verbs", `${lang}.json`), "utf8"));
+    } catch (e) {
+      console.error(`Could not load the ${lang} verb dictionary:`, e.message);
+      return {};
+    }
+  }
+  return verbDictionaries[lang];
+}
+
 function sendJSON(res, statusCode, body) {
   res.writeHead(statusCode, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
@@ -1713,6 +1728,21 @@ function handleApiRoute(req, res, url) {
         sendJSON(res, 200, { ok: true, ...result });
       })
       .catch((err) => sendJSON(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // ---- GET /api/verbs?lang=es&v=comer,vivir -- verb dictionary lookup ----
+  // Returns only the verbs asked for; unknown ones are simply absent.
+  if (url.pathname === "/api/verbs" && req.method === "GET") {
+    const user = getSessionUser(req);
+    if (!user) return sendJSON(res, 401, { error: "Not logged in." }) || true;
+    if (url.searchParams.get("lang") !== "es") return sendJSON(res, 404, { error: "No verb dictionary for that language." }) || true;
+    const dictionary = getVerbDictionary("es");
+    const verbs = {};
+    (url.searchParams.get("v") || "").split(",").slice(0, 100).forEach((name) => {
+      if (Object.prototype.hasOwnProperty.call(dictionary, name)) verbs[name] = dictionary[name];
+    });
+    sendJSON(res, 200, { verbs });
     return true;
   }
 

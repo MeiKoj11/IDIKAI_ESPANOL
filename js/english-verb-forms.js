@@ -117,6 +117,8 @@
     spell: ["spelt", "spelt"],
     spill: ["spilt", "spilt"],
     lay: ["laid", "laid"],
+    get: ["got", "got"],
+    control: ["controlled", "controlled"],
   };
 
   // Verbs whose 3rd-person-singular is irregular beyond the usual +s
@@ -125,7 +127,11 @@
 
   // "be" is the one common verb where the regular e-drop gerund rule
   // gives the wrong result ("bing" instead of "being").
-  const IRREGULAR_GERUND = { be: "being" };
+  const IRREGULAR_GERUND = { be: "being", control: "controlling" };
+
+  // Short verbs that look like "stop" but keep a single final consonant,
+  // because the stress is on the first syllable (visit -> visited).
+  const NO_DOUBLING = new Set(["happen", "visit", "enter", "open", "listen", "offer", "order", "limit", "cover", "answer", "bother"]);
 
   // Ends in a consonant that needs "es" instead of a plain "s"/"ed".
   function endsInSibilant(word) {
@@ -141,7 +147,7 @@
   // deliberately conservative (only fires for short words), skips
   // w/x/y as the final consonant (those never double).
   function needsConsonantDoubling(word) {
-    if (word.length > 6) return false;
+    if (word.length > 6 || NO_DOUBLING.has(word)) return false;
     return /[^aeiou][aeiou][^aeiouwxy]$/.test(word);
   }
 
@@ -154,7 +160,7 @@
 
   function regularGerund(base) {
     if (/ie$/.test(base)) return base.slice(0, -2) + "ying";
-    if (/[^aeiou]e$/.test(base) && !/(ee|oe|ye)$/.test(base)) return base.slice(0, -1) + "ing";
+    if (/([^aeiou]|u)e$/.test(base) && !/(ee|oe|ye)$/.test(base)) return base.slice(0, -1) + "ing";
     if (needsConsonantDoubling(base)) return base + base.slice(-1) + "ing";
     return base + "ing";
   }

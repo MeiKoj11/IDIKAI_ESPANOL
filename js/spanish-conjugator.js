@@ -89,7 +89,52 @@
     return verb.type === "ar" ? bareStem + "ado" : bareStem + "ido";
   }
 
+  // ---- Dictionary verbs ----
+  // Verbs from the generated dictionary (see scripts/build-spanish-verbs.js)
+  // arrive as one packed line of ready-made forms: the tenses below x 6
+  // persons, then the past participle, then "1" if irregular.
+  const PACKED_TENSES = [
+    "present", "preterite", "imperfect", "future", "conditional",
+    "subjPresent", "subjImperfect", "subjImperfectSe", "subjFuture",
+    "imperativeAffirmative", "imperativeNegative",
+  ];
+  const REFLEXIVE_PRONOUNS = ["me", "te", "se", "nos", "os", "se"];
+
+  function verbFromDictionary(infinitive, english, packed) {
+    const cells = packed.split(";");
+    const forms = {};
+    PACKED_TENSES.forEach((tense, i) => {
+      forms[tense] = cells.slice(i * 6, i * 6 + 6);
+    });
+    const end = PACKED_TENSES.length * 6;
+    const ending = infinitive.replace(/se$/, "").slice(-2).replace("í", "i");
+    return {
+      infinitive,
+      english: english || "",
+      type: ending,
+      forms,
+      participle: cells[end],
+      irregular: cells[end + 1] === "1",
+    };
+  }
+
+  function conjugateFromDictionary(verb, tense, person) {
+    const personIndex = PERSON_KEYS.indexOf(person);
+    if (personIndex === -1) return null;
+    const auxTense = COMPOUND_TENSE_AUX[tense] || SUBJUNCTIVE_COMPOUND_AUX[tense];
+    if (auxTense) {
+      const auxForm = conjugate(findVerb("haber"), auxTense, person);
+      if (!auxForm) return null;
+      const pronoun = verb.infinitive.endsWith("se") ? `${REFLEXIVE_PRONOUNS[personIndex]} ` : "";
+      return `${pronoun}${auxForm} ${verb.participle}`;
+    }
+    const form = verb.forms[tense] && verb.forms[tense][personIndex];
+    return form && form !== "-" ? form : null; // "-" = the verb has no such form
+  }
+
   function conjugate(verb, tense, person) {
+    if (verb.forms) return conjugateFromDictionary(verb, tense, person);
+
     // 1. A hand-verified override always wins.
     const override = verb.overrides && verb.overrides[tense] && verb.overrides[tense][person];
     if (override) return override;
@@ -255,7 +300,28 @@
   function findVerb(infinitive) {
     if (!infinitive) return null;
     const needle = infinitive.trim().toLowerCase();
-    return VERBS.find((v) => v.infinitive === needle) || null;
+    return VERBS.find((v) => v.infinitive === needle) || savedVerbs.get(needle) || null;
+  }
+
+  // The learner's own saved verbs, fetched from the dictionary by
+  // spanish-saved-verbs.js. Kept out of VERBS, which means "common verbs".
+  const savedVerbs = new Map();
+  function addDictionaryVerb(infinitive, packed) {
+    if (!findVerb(infinitive)) savedVerbs.set(infinitive, verbFromDictionary(infinitive, "", packed));
+  }
+
+  // Test-ready verbs for the learner's saved words. A word the dictionary
+  // doesn't know is left out rather than guessed at.
+  function verbsForSavedWords(words) {
+    const seen = new Set();
+    const verbs = [];
+    words.forEach((w) => {
+      const verb = findVerb(w.targetLang);
+      if (!verb || seen.has(verb.infinitive)) return;
+      seen.add(verb.infinitive);
+      verbs.push(Object.assign({}, verb, { english: w.english || verb.english, fromVocab: true }));
+    });
+    return verbs;
   }
 
   // Built lazily, once, on first use. Two indices: "exact" (accents as
@@ -282,7 +348,9 @@
         looseIndex.get(looseKey).push(match);
       });
     }
-    VERBS.forEach((verb) => {
+    // Only the original hand-picked list: indexing every common verb would
+    // flag everyday words like "para" as verb forms while adding vocab.
+    VERBS.slice(0, HAND_CHECKED_COUNT).forEach((verb) => {
       TENSE_KEYS.forEach((tense) => indexTense(verb, tense, PERSON_KEYS));
       SUBJUNCTIVE_TENSE_KEYS.forEach((tense) => indexTense(verb, tense, PERSON_KEYS));
       IMPERATIVE_TENSE_KEYS.forEach((tense) => indexTense(verb, tense, IMPERATIVE_PERSON_KEYS));
@@ -315,7 +383,15 @@
     return loose && loose.length ? loose : null;
   }
 
+  const HAND_CHECKED_COUNT = VERBS.length;
+  (root.SpanishCommonVerbs || []).forEach(([infinitive, english, packed]) => {
+    if (!findVerb(infinitive)) VERBS.push(verbFromDictionary(infinitive, english, packed));
+  });
+
   const SpanishConjugator = {
+    addDictionaryVerb,
+    verbFromDictionary,
+    verbsForSavedWords,
     VERBS,
     TENSE_KEYS,
     TENSE_LABELS,

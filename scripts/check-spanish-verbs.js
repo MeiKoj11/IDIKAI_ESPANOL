@@ -5,7 +5,10 @@
   answers are known, checked against the code the tests use. Run after
   any change to verb data:   node scripts/check-spanish-verbs.js
 
-  Each line is: infinitive | tense | person | correct form.
+  Each line is: infinitive | tense | person | correct form. Every line is
+  checked twice: with the app's own rules, and with the generated
+  dictionary (server/verbs/es.json). A few extra lines cover verbs only
+  the dictionary knows.
 */
 
 global.window = global;
@@ -103,15 +106,54 @@ hablar|subjImperfectSe|nosotros|hablásemos
 ser|subjImperfect|nosotros|fuéramos
 `;
 
+// Verbs outside the app's original hand-picked list.
+const DICTIONARY_ONLY = `
+leer|preterite|el|leyó
+leer|presentPerfect|yo|he leído
+conducir|present|yo|conduzco
+conducir|preterite|ellos|condujeron
+oír|present|tu|oyes
+recibir|preterite|yo|recibí
+terminar|subjPresent|el|termine
+contar|present|yo|cuento
+elegir|present|yo|elijo
+construir|present|el|construye
+caer|present|yo|caigo
+romper|presentPerfect|yo|he roto
+describir|presentPerfect|yo|he descrito
+levantarse|present|yo|me levanto
+levantarse|presentPerfect|tu|te has levantado
+levantarse|imperativeAffirmative|tu|levántate
+levantarse|imperativeNegative|el|no se levante
+levantarse|imperativeAffirmative|el|levántese
+sentarse|imperativeAffirmative|ellos|siéntense
+acostarse|present|nosotros|nos acostamos
+tener|imperativeAffirmative|el|tenga
+obtener|preterite|yo|obtuve
+obtener|imperativeAffirmative|tu|obtén
+ponerse|present|yo|me pongo
+ponerse|imperativeAffirmative|tu|ponte
+hablar|imperativeNegative|ellos|no hablen
+`;
+
+const packed = require("../server/verbs/es.json");
+
 let total = 0;
 const wrong = [];
-ANSWERS.trim().split("\n").forEach((line) => {
-  const [infinitive, tense, person, expected] = line.split("|");
-  const verb = Conjugator.findVerb(infinitive);
-  const got = verb ? Conjugator.conjugate(verb, tense, person) : "(verb missing)";
-  total += 1;
-  if (got !== expected) wrong.push(`${infinitive} ${tense} ${person}: got "${got}", should be "${expected}"`);
-});
+function check(label, lines, lookup) {
+  lines.trim().split("\n").forEach((line) => {
+    const [infinitive, tense, person, expected] = line.split("|");
+    const verb = lookup(infinitive);
+    const got = verb ? Conjugator.conjugate(verb, tense, person) : "(verb missing)";
+    total += 1;
+    if (got !== expected) wrong.push(`[${label}] ${infinitive} ${tense} ${person}: got "${got}", should be "${expected}"`);
+  });
+}
+
+const dictionaryVerb = (v) => packed[v] && Conjugator.verbFromDictionary(v, "", packed[v]);
+check("app", ANSWERS, Conjugator.findVerb);
+check("dictionary", ANSWERS, dictionaryVerb);
+check("dictionary", DICTIONARY_ONLY, dictionaryVerb);
 
 console.log(`${total - wrong.length} of ${total} correct`);
 wrong.forEach((w) => console.log("  " + w));

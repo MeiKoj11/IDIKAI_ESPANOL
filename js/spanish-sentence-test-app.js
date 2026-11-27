@@ -67,22 +67,11 @@ function populateTestThemeCheckboxes() {
   });
 }
 
-// Verbs saved in one theme — only words the dictionary lookup tagged as
-// a regular ar/er/ir verb (same "safely conjugatable" gate the quick
-// Conjugation Test's own vocab pool uses), deduplicated by infinitive.
+// Verbs saved in one theme -- those the verb dictionary knows, regular or
+// irregular (same rule as the quick Conjugation Test), one per infinitive.
 function verbsFromTheme(themeId) {
   const savedWords = typeof Storage !== "undefined" && Storage.getVerbWords ? Storage.getVerbWords("es") : [];
-  const seen = new Set();
-  const verbs = [];
-  savedWords.forEach((w) => {
-    if (w.themeId !== themeId) return;
-    if (w.verbType !== "ar" && w.verbType !== "er" && w.verbType !== "ir") return;
-    const infinitive = (w.targetLang || "").trim().toLowerCase();
-    if (!infinitive || seen.has(infinitive)) return;
-    seen.add(infinitive);
-    verbs.push({ infinitive, type: w.verbType, english: w.english || "", irregular: false, fromVocab: true });
-  });
-  return verbs;
+  return SpanishConjugator.verbsForSavedWords(savedWords.filter((w) => w.themeId === themeId));
 }
 
 // Unions the curated "most common verbs" list (if ticked) with every

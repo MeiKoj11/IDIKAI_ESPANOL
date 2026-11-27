@@ -49,26 +49,16 @@ let tensesTestSession = null;
 // generic subject keys used to build English cue sentences.
 const PERSON_TO_SUBJECT_KEY = { yo: "i", tu: "you", el: "heShe", nosotros: "we", vosotros: "youAll", ellos: "they" };
 
-// The app's curated verb list, plus any verb the user has saved to
-// their own Vocab Bank BY ITSELF (not as part of a saved phrase) and
-// that's either already in the curated list (so it's known-accurate)
-// or tagged "regular" (ar/ir) by the dictionary lookup — genuinely
-// irregular verbs outside the curated list are left out rather than
+// The common verbs, plus any verb the user has saved to their own Vocab
+// Bank BY ITSELF (not as part of a saved phrase) that the verb dictionary
+// knows -- regular or irregular. Unknown ones are left out rather than
 // guessed at, since a wrong conjugation is worse than a smaller pool.
 function buildSpanishVerbPool() {
-  const curated = SpanishConjugator.VERBS.slice();
-  const seen = new Set(curated.map((v) => v.infinitive));
+  const common = SpanishConjugator.VERBS.slice();
+  const seen = new Set(common.map((v) => v.infinitive));
   const savedWords = typeof Storage !== "undefined" && Storage.getVerbWords ? Storage.getVerbWords("es") : [];
-  const fromVocab = [];
-  savedWords.forEach((w) => {
-    const infinitive = (w.targetLang || "").trim().toLowerCase();
-    if (!infinitive || seen.has(infinitive)) return;
-    if (w.verbType === "ar" || w.verbType === "ir") {
-      fromVocab.push({ infinitive, type: w.verbType, english: w.english || "", irregular: false, fromVocab: true });
-      seen.add(infinitive);
-    }
-  });
-  return curated.concat(fromVocab);
+  const fromVocab = SpanishConjugator.verbsForSavedWords(savedWords).filter((v) => !seen.has(v.infinitive));
+  return common.concat(fromVocab);
 }
 
 function populateTestVerbCheckboxes() {
